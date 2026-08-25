@@ -5,13 +5,14 @@ using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 /// <summary>
-/// Shows a world-space pet prompt above the dog and accepts E only when the
-/// player is close enough and the camera is actually aimed at the dog.
+/// Shows a world-space interaction prompt above the dog and accepts E/Q only
+/// when the player is close enough and the camera is actually aimed at it.
 /// </summary>
 public sealed class DogPetInteraction : MonoBehaviour
 {
     [Header("Detection")]
     [SerializeField, Min(0.1f)] private float interactionDistance = 1.3f;
+    [SerializeField, Min(0.1f)] private float grabDistance = 1.45f;
     [SerializeField, Range(1f, 90f)] private float lookAngle = 38f;
     [SerializeField, Min(0.05f)] private float promptHeight = 0.72f;
     [SerializeField] private Transform playerTransform;
@@ -29,6 +30,15 @@ public sealed class DogPetInteraction : MonoBehaviour
 
     [Header("Prompt")]
     [SerializeField] private string promptText = "E  Pet";
+    [SerializeField] private string grabPromptText = "Q  잡기";
+    [SerializeField] private string releasePromptText = "Q  내려놓기";
+    [SerializeField] private Vector3 holdLocalPosition = new Vector3(0f, -0.66f, 4.0f);
+    [SerializeField] private Vector3 holdLocalEulerAngles = new Vector3(0f, 180f, 0f);
+    [SerializeField] private Vector3 holdSupportOffset = new Vector3(0f, -0.05f, 0f);
+    [SerializeField] private Vector3 heldCradleEulerAngles = new Vector3(0f, 0f, 0f);
+    [SerializeField, Range(0f, 30f)] private float heldBodySagAngle = 18f;
+    [SerializeField, Range(0f, 1f)] private float heldLimbGravityInfluence = 0.45f;
+    [SerializeField, Range(0f, 1f)] private float heldTailGravityInfluence = 0.5f;
     [SerializeField] private Color promptColor = new Color(1f, 0.86f, 0.35f, 1f);
 
     private Canvas promptCanvas;
@@ -39,8 +49,36 @@ public sealed class DogPetInteraction : MonoBehaviour
     private Quaternion headRestRotation;
     private bool headRestRotationCaptured;
     private bool canPet;
+    private bool canGrab;
     private bool petting;
+    private bool holding;
     private PrototypePetAgent petAgent;
+    private Transform holdAnchor;
+    private Transform heldMovementRoot;
+    private Transform heldOriginalParent;
+    private readonly List<HeldBonePose> heldBonePoses = new List<HeldBonePose>();
+    private Transform leftShoulderBone;
+    private Transform rightShoulderBone;
+    private Transform leftArmBone;
+    private Transform rightArmBone;
+    private Transform leftForeArmBone;
+    private Transform rightForeArmBone;
+    private Transform neckBone;
+    private Transform spineBone;
+    private Transform spine1Bone;
+    private Transform spine2Bone;
+    private Transform leftUpperLegBone;
+    private Transform rightUpperLegBone;
+    private Transform leftLowerLegBone;
+    private Transform rightLowerLegBone;
+    private readonly List<Transform> tailBones = new List<Transform>();
+    private Transform holdSupportBone;
+    private bool heldPoseCaptured;
+    private bool animatorWasEnabled;
+    private bool petAnimatorPoseCaptured;
+    private bool petAnimatorWasEnabled;
+    private Quaternion neckRestRotation;
+    private bool neckRestRotationCaptured;
     private Transform promptFollowRoot;
     private Vector3 fixedPromptLocalPosition;
     private bool fixedPromptPositionCaptured;
@@ -56,10 +94,11 @@ public sealed class DogPetInteraction : MonoBehaviour
         public float Drift;
     }
 
-    private static readonly string[] HeadNames =
+    private sealed class HeldBonePose
     {
-        "Head", "head", "Face", "face", "Neck", "neck"
-    };
+        public Transform Bone;
+        public Quaternion RestLocalRotation;
+    }
 
     private static readonly string[] EyeNames =
     {
@@ -139,6 +178,11 @@ public sealed class DogPetInteraction : MonoBehaviour
 
     private void OnDestroy()
     {
+        RestoreHeldPose();
+
+        if (petAnimatorPoseCaptured && animator != null)
+            animator.enabled = petAnimatorWasEnabled;
+
         if (promptCanvas != null)
             Destroy(promptCanvas.gameObject);
         if (heartCanvas != null)
@@ -149,12 +193,30 @@ public sealed class DogPetInteraction : MonoBehaviour
     {
         ResolveReferences();
 
-        canPet = IsPlayerCloseAndLooking();
-        bool promptVisible = canPet && !petting;
+        if (holding)
+        {
+            // While the dog is in the player's arms, neither pet nor grab
+            // guidance should compete with the held character on screen.
+            SetPromptVisible(false);
+            if (IsGrabPressed())
+                ReleaseDog();
+
+            UpdateHearts();
+            return;
+        }
+
+        canPet = IsPlayerCloseAndLooking(interactionDistance);
+        canGrab = IsPlayerCloseAndLooking(grabDistance);
+        bool promptVisible = (canPet || canGrab) && !petting;
+        if (promptLabel != null)
+            promptLabel.text = canGrab ? promptText + "   " + grabPromptText : promptText;
+
         SetPromptVisible(promptVisible);
         SetDogInteractionFocus(petting || promptVisible);
 
-        if (promptVisible && IsPetPressed())
+        if (promptVisible && canGrab && IsGrabPressed())
+            GrabDog();
+        else if (promptVisible && canPet && IsPetPressed())
             StartCoroutine(PetRoutine());
 
         UpdateHearts();
@@ -162,6 +224,15 @@ public sealed class DogPetInteraction : MonoBehaviour
 
     private void LateUpdate()
     {
+        // Keep the held pose independent from the prompt UI. In XR or when
+        // the camera is briefly unavailable, the UI can be skipped while the
+        // dog's limbs must still be updated every frame.
+        if (holding)
+        {
+            UpdateHeldAnchorPosition();
+            ApplyHeldPose();
+        }
+
         if (promptCanvas == null || playerCamera == null)
             return;
 
@@ -192,12 +263,27 @@ public sealed class DogPetInteraction : MonoBehaviour
             petAgent = GetComponent<PrototypePetAgent>();
 
         if (headTransform == null)
-            headTransform = FindChildByNames(HeadNames);
+        {
+            // FindChildByNames checks names while traversing the hierarchy,
+            // so ask for the actual head before falling back to the neck.
+            headTransform = FindChildByNames(new[] { "Head", "head" }) ??
+                FindChildByNames(new[] { "Face", "face" }) ??
+                FindChildByNames(new[] { "Neck", "neck" });
+        }
 
         if (headTransform != null && !headRestRotationCaptured)
         {
             headRestRotation = headTransform.localRotation;
             headRestRotationCaptured = true;
+        }
+
+        if (neckBone == null)
+            neckBone = FindChildByNames(new[] { "Neck", "neck" });
+
+        if (neckBone != null && !neckRestRotationCaptured)
+        {
+            neckRestRotation = neckBone.localRotation;
+            neckRestRotationCaptured = true;
         }
 
         if (eyeObjects == null || eyeObjects.Length == 0)
@@ -224,7 +310,7 @@ public sealed class DogPetInteraction : MonoBehaviour
             petAgent = GetComponent<PrototypePetAgent>();
 
         if (petAgent != null)
-            petAgent.SetInteractionFocus(focused);
+            petAgent.SetInteractionFocus(focused, focused && !petting);
     }
 
     private void ResolvePromptFollowRoot()
@@ -328,7 +414,7 @@ public sealed class DogPetInteraction : MonoBehaviour
         return GetDogBounds().center + Vector3.up * 0.1f;
     }
 
-    private bool IsPlayerCloseAndLooking()
+    private bool IsPlayerCloseAndLooking(float maxDistance)
     {
         if (playerCamera == null)
             return false;
@@ -338,7 +424,7 @@ public sealed class DogPetInteraction : MonoBehaviour
             ? playerTransform.position
             : playerCamera.transform.position;
         Vector3 closestPoint = dogBounds.ClosestPoint(playerPosition);
-        if ((closestPoint - playerPosition).sqrMagnitude > interactionDistance * interactionDistance)
+        if ((closestPoint - playerPosition).sqrMagnitude > maxDistance * maxDistance)
             return false;
 
         Vector3 targetPosition = GetGazeTargetPosition(dogBounds);
@@ -417,6 +503,369 @@ public sealed class DogPetInteraction : MonoBehaviour
         return Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame;
     }
 
+    private bool IsGrabPressed()
+    {
+        return Keyboard.current != null && Keyboard.current.qKey.wasPressedThisFrame;
+    }
+
+    private void GrabDog()
+    {
+        if (holding || playerCamera == null || petAgent == null)
+            return;
+
+        heldMovementRoot = petAgent.MovementRoot;
+        if (heldMovementRoot == null)
+            return;
+
+        heldOriginalParent = heldMovementRoot.parent;
+        CaptureHeldPose();
+
+        // Place the dog from the camera's current facing direction. While
+        // held, the anchor is refreshed every frame so turning the player
+        // turns and repositions the dog with the player's view.
+        // Resolve the hold point from the camera's current world-space axes.
+        // This keeps the dog in front of the direction the player is looking,
+        // even when the XR camera has rotated independently of its parent.
+        float holdForwardDistance = Mathf.Max(0.1f, Mathf.Abs(holdLocalPosition.z));
+        Vector3 flatForward = Vector3.ProjectOnPlane(playerCamera.transform.forward, Vector3.up);
+        if (flatForward.sqrMagnitude < 0.0001f)
+            flatForward = Vector3.forward;
+        flatForward.Normalize();
+
+        // Keep the 4m separation horizontal. A pitched-down camera must not
+        // push the dog below the floor when the player looks toward the ground.
+        Vector3 flatRight = Vector3.Cross(Vector3.up, flatForward).normalized;
+        Vector3 holdWorldPosition = playerCamera.transform.position
+            + flatRight * holdLocalPosition.x
+            + Vector3.up * holdLocalPosition.y
+            + flatForward * holdForwardDistance;
+        Quaternion holdWorldRotation = playerCamera.transform.rotation * Quaternion.Euler(holdLocalEulerAngles);
+
+        holdAnchor = new GameObject("Dog Hold Anchor").transform;
+        holdAnchor.SetPositionAndRotation(holdWorldPosition, holdWorldRotation);
+
+        heldMovementRoot.SetParent(holdAnchor, false);
+        heldMovementRoot.localRotation = Quaternion.Euler(heldCradleEulerAngles);
+
+        // Attach at the middle of the torso instead of the neck or model
+        // origin. This reads like two hands wrapping around the body between
+        // the front paws and hind legs, while the head remains visible above.
+        if (holdSupportBone != null)
+        {
+            Vector3 supportLocalPosition = heldMovementRoot.InverseTransformPoint(holdSupportBone.position);
+            heldMovementRoot.localPosition = -supportLocalPosition + holdSupportOffset;
+        }
+        else
+        {
+            heldMovementRoot.localPosition = Vector3.zero;
+        }
+
+        petAgent.SetCarried(true);
+        ApplyHeldPose();
+
+        holding = true;
+        canPet = false;
+        canGrab = false;
+        SetPromptVisible(false);
+    }
+
+    private void UpdateHeldAnchorPosition()
+    {
+        if (holdAnchor == null || playerCamera == null)
+            return;
+
+        float holdForwardDistance = Mathf.Max(0.1f, Mathf.Abs(holdLocalPosition.z));
+        Vector3 flatForward = Vector3.ProjectOnPlane(playerCamera.transform.forward, Vector3.up);
+        if (flatForward.sqrMagnitude < 0.0001f)
+            flatForward = Vector3.forward;
+        flatForward.Normalize();
+
+        Vector3 flatRight = Vector3.Cross(Vector3.up, flatForward).normalized;
+        Vector3 holdWorldPosition = playerCamera.transform.position
+            + flatRight * holdLocalPosition.x
+            + Vector3.up * holdLocalPosition.y
+            + flatForward * holdForwardDistance;
+        Quaternion holdWorldRotation = playerCamera.transform.rotation * Quaternion.Euler(holdLocalEulerAngles);
+        holdAnchor.SetPositionAndRotation(holdWorldPosition, holdWorldRotation);
+    }
+
+    private void ReleaseDog()
+    {
+        if (!holding || heldMovementRoot == null)
+            return;
+
+        Vector3 dropPosition = playerCamera != null
+            ? playerCamera.transform.position + playerCamera.transform.forward * 1.15f
+            : heldMovementRoot.position;
+        Vector3 rayOrigin = dropPosition + Vector3.up * 1.5f;
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 4f,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        {
+            dropPosition.y = hit.point.y;
+        }
+
+        Quaternion dropRotation = playerCamera != null
+            ? Quaternion.Euler(0f, playerCamera.transform.eulerAngles.y, 0f)
+            : heldMovementRoot.rotation;
+
+        heldMovementRoot.SetParent(heldOriginalParent, true);
+        heldMovementRoot.SetPositionAndRotation(dropPosition, dropRotation);
+        RestoreHeldPose();
+        petAgent.SetCarried(false);
+
+        if (holdAnchor != null)
+            Destroy(holdAnchor.gameObject);
+
+        holdAnchor = null;
+        heldMovementRoot = null;
+        heldOriginalParent = null;
+        holding = false;
+    }
+
+    private void CaptureHeldPose()
+    {
+        heldBonePoses.Clear();
+        tailBones.Clear();
+
+        Transform skeletonRoot = FindChildByNames(new[] { "Root" });
+        if (skeletonRoot != null)
+        {
+            Transform[] bones = skeletonRoot.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < bones.Length; i++)
+            {
+                heldBonePoses.Add(new HeldBonePose
+                {
+                    Bone = bones[i],
+                    RestLocalRotation = bones[i].localRotation
+                });
+            }
+        }
+
+        holdSupportBone = FindChildByNames(new[] { "Spine1" }) ??
+            FindChildByNames(new[] { "Spine2" }) ??
+            FindChildByNames(new[] { "Spine" });
+        leftShoulderBone = FindChildByNames(new[] { "LeftShoulder" });
+        rightShoulderBone = FindChildByNames(new[] { "RightShoulder" });
+        leftArmBone = FindChildByNames(new[] { "LeftArm" });
+        rightArmBone = FindChildByNames(new[] { "RightArm" });
+        leftForeArmBone = FindChildByNames(new[] { "LeftForeArm" });
+        rightForeArmBone = FindChildByNames(new[] { "RightForeArm" });
+        neckBone = FindChildByNames(new[] { "Neck" });
+        spineBone = FindChildByNames(new[] { "Spine" });
+        spine1Bone = FindChildByNames(new[] { "Spine1" });
+        spine2Bone = FindChildByNames(new[] { "Spine2" });
+        leftUpperLegBone = FindChildByNames(new[] { "LeftUpLeg" });
+        rightUpperLegBone = FindChildByNames(new[] { "RightUpLeg" });
+        leftLowerLegBone = FindChildByNames(new[] { "LeftLeg" });
+        rightLowerLegBone = FindChildByNames(new[] { "RightLeg" });
+
+        Transform tailRoot = FindChildByNames(new[] { "Tail" });
+        if (tailRoot != null)
+        {
+            Transform[] tailChain = tailRoot.GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < tailChain.Length; i++)
+                tailBones.Add(tailChain[i]);
+        }
+
+        animatorWasEnabled = animator != null && animator.enabled;
+        if (animator != null)
+            animator.enabled = false;
+
+        heldPoseCaptured = heldBonePoses.Count > 0;
+    }
+
+    private void RestoreHeldPose()
+    {
+        if (!heldPoseCaptured)
+            return;
+
+        for (int i = 0; i < heldBonePoses.Count; i++)
+        {
+            HeldBonePose pose = heldBonePoses[i];
+            if (pose.Bone != null)
+                pose.Bone.localRotation = pose.RestLocalRotation;
+        }
+
+        if (animator != null)
+            animator.enabled = animatorWasEnabled;
+
+        heldBonePoses.Clear();
+        leftShoulderBone = null;
+        rightShoulderBone = null;
+        leftArmBone = null;
+        rightArmBone = null;
+        leftForeArmBone = null;
+        rightForeArmBone = null;
+        neckBone = null;
+        spineBone = null;
+        spine1Bone = null;
+        spine2Bone = null;
+        leftUpperLegBone = null;
+        rightUpperLegBone = null;
+        leftLowerLegBone = null;
+        rightLowerLegBone = null;
+        tailBones.Clear();
+        holdSupportBone = null;
+        heldPoseCaptured = false;
+    }
+
+    private void ApplyHeldPose()
+    {
+        if (!heldPoseCaptured || holdAnchor == null)
+            return;
+
+        for (int i = 0; i < heldBonePoses.Count; i++)
+        {
+            HeldBonePose pose = heldBonePoses[i];
+            if (pose.Bone != null)
+                pose.Bone.localRotation = pose.RestLocalRotation;
+        }
+
+        // The body is supported around its middle, so use a controlled bend
+        // through the spine. The lower torso still needs to sag toward the
+        // floor instead of staying rigid and horizontal.
+        float sag = heldBodySagAngle;
+        ApplyLocalOffset(spineBone, Quaternion.Euler(sag * 0.35f, 0f, 0f));
+        ApplyLocalOffset(spine1Bone, Quaternion.Euler(sag * 0.65f, 0f, 0f));
+        ApplyLocalOffset(spine2Bone, Quaternion.Euler(sag * 0.45f, 0f, 0f));
+
+        // Use the project's gravity direction so the pose remains correct if
+        // the game later changes gravity or runs in a rotated XR scene.
+        Vector3 downDirection = Physics.gravity.sqrMagnitude > 0.001f
+            ? Physics.gravity.normalized
+            : Vector3.down;
+        Vector3 dogFrontDirection = holdAnchor.TransformDirection(Vector3.back);
+        Vector3 dogBackDirection = holdAnchor.TransformDirection(Vector3.forward);
+        Vector3 leftDirection = -holdAnchor.right;
+        Vector3 rightDirection = holdAnchor.right;
+
+        // Let the lower torso fall away from the supported middle of the body.
+        // Re-anchoring the support bone after this keeps the hands under the
+        // torso while the rest of the body responds to gravity.
+        float torsoGravityInfluence = Mathf.Clamp01(0.28f + heldLimbGravityInfluence * 0.65f);
+        Vector3 torsoGravityDirection = Vector3.ProjectOnPlane(downDirection, holdAnchor.right);
+        if (torsoGravityDirection.sqrMagnitude < 0.0001f)
+            torsoGravityDirection = downDirection;
+        torsoGravityDirection.Normalize();
+        AimBoneTowardChildInPlane(spineBone, torsoGravityDirection, holdAnchor.right, torsoGravityInfluence);
+        Vector3 upperTorsoDropDirection = (torsoGravityDirection * 0.55f + dogFrontDirection * 0.45f).normalized;
+        // Keep the head-bearing upper torso readable; most of the drop should
+        // happen below the hand support rather than folding the head down.
+        AimBoneTowardChildInPlane(spine1Bone, upperTorsoDropDirection, holdAnchor.right, torsoGravityInfluence * 0.18f);
+
+        // Cradled pose: front paws fold toward the chest instead of hanging
+        // straight down, while the hind legs open gently toward the player.
+        Vector3 leftArmDirection = (dogFrontDirection * 0.7f + leftDirection * 0.35f + Vector3.up * 0.12f).normalized;
+        Vector3 rightArmDirection = (dogFrontDirection * 0.7f + rightDirection * 0.35f + Vector3.up * 0.12f).normalized;
+        float gravityBias = heldLimbGravityInfluence;
+        Vector3 leftForeArmDirection = (dogFrontDirection * 0.48f + leftDirection * 0.18f + Vector3.up * 0.22f + downDirection * (0.12f + gravityBias * 0.22f)).normalized;
+        Vector3 rightForeArmDirection = (dogFrontDirection * 0.48f + rightDirection * 0.18f + Vector3.up * 0.22f + downDirection * (0.12f + gravityBias * 0.22f)).normalized;
+        Vector3 leftLegDirection = (dogFrontDirection * 0.38f + leftDirection * 0.42f + downDirection * (0.42f + gravityBias * 0.5f)).normalized;
+        Vector3 rightLegDirection = (dogFrontDirection * 0.38f + rightDirection * 0.42f + downDirection * (0.42f + gravityBias * 0.5f)).normalized;
+        Vector3 leftLowerLegDirection = (dogFrontDirection * 0.5f + leftDirection * 0.3f + downDirection * (0.32f + gravityBias * 0.42f)).normalized;
+        Vector3 rightLowerLegDirection = (dogFrontDirection * 0.5f + rightDirection * 0.3f + downDirection * (0.32f + gravityBias * 0.42f)).normalized;
+        Vector3 tailDirection = (downDirection * (0.65f + gravityBias * 0.35f) + dogBackDirection * 0.35f).normalized;
+
+        AimBoneTowardChild(leftShoulderBone, leftArmDirection, 0.65f);
+        AimBoneTowardChild(rightShoulderBone, rightArmDirection, 0.65f);
+        AimBoneTowardChild(leftArmBone, leftArmDirection, 0.65f);
+        AimBoneTowardChild(rightArmBone, rightArmDirection, 0.65f);
+        AimBoneTowardChild(leftForeArmBone, leftForeArmDirection, 0.7f);
+        AimBoneTowardChild(rightForeArmBone, rightForeArmDirection, 0.7f);
+        AimBoneTowardChild(leftUpperLegBone, leftLegDirection, 0.58f);
+        AimBoneTowardChild(rightUpperLegBone, rightLegDirection, 0.58f);
+        AimBoneTowardChild(leftLowerLegBone, leftLowerLegDirection, 0.62f);
+        AimBoneTowardChild(rightLowerLegBone, rightLowerLegDirection, 0.62f);
+
+        for (int i = 0; i < tailBones.Count; i++)
+        {
+            Vector3 segmentDirection = (tailDirection + dogBackDirection * (i * 0.12f)).normalized;
+            AimBoneTowardChild(tailBones[i], segmentDirection, heldTailGravityInfluence * 0.8f);
+        }
+
+        KeepHeldFaceReadable();
+        KeepHeldSupportAtAnchor();
+    }
+
+    private void KeepHeldSupportAtAnchor()
+    {
+        if (heldMovementRoot == null || holdSupportBone == null)
+            return;
+
+        Vector3 supportLocalPosition = heldMovementRoot.InverseTransformPoint(holdSupportBone.position);
+        heldMovementRoot.localPosition = -supportLocalPosition + holdSupportOffset;
+    }
+
+    private void KeepHeldFaceReadable()
+    {
+        if (headTransform == null)
+            return;
+
+        Vector3 targetPosition = playerCamera != null
+            ? playerCamera.transform.position
+            : headTransform.position + holdAnchor.TransformDirection(Vector3.back);
+        Vector3 lookDirection = targetPosition - headTransform.position;
+        if (lookDirection.sqrMagnitude < 0.0001f)
+            return;
+
+        Quaternion targetRotation = Quaternion.LookRotation(lookDirection.normalized, Vector3.up);
+        if (neckBone != null)
+            neckBone.rotation = Quaternion.Slerp(neckBone.rotation, targetRotation, 0.35f);
+        headTransform.rotation = Quaternion.Slerp(headTransform.rotation, targetRotation, 0.7f);
+    }
+
+    private static void ApplyLocalOffset(Transform bone, Quaternion offset)
+    {
+        if (bone != null)
+            bone.localRotation *= offset;
+    }
+
+    private static void AimBoneTowardChild(Transform bone, Vector3 desiredDirection, float influence = 1f)
+    {
+        if (bone == null || bone.childCount == 0 || desiredDirection.sqrMagnitude < 0.001f)
+            return;
+
+        Transform child = bone.GetChild(0);
+        Vector3 currentDirection = child.position - bone.position;
+        if (currentDirection.sqrMagnitude < 0.0001f)
+            return;
+
+        Vector3 blendedDirection = Vector3.Slerp(
+            currentDirection.normalized,
+            desiredDirection.normalized,
+            Mathf.Clamp01(influence));
+        Quaternion correction = Quaternion.FromToRotation(
+            currentDirection.normalized,
+            blendedDirection);
+        bone.rotation = correction * bone.rotation;
+    }
+
+    private static void AimBoneTowardChildInPlane(
+        Transform bone,
+        Vector3 desiredDirection,
+        Vector3 planeNormal,
+        float influence)
+    {
+        if (bone == null || bone.childCount == 0 || desiredDirection.sqrMagnitude < 0.001f)
+            return;
+
+        Transform child = bone.GetChild(0);
+        Vector3 currentDirection = child.position - bone.position;
+        Vector3 currentPlanarDirection = Vector3.ProjectOnPlane(currentDirection, planeNormal);
+        Vector3 desiredPlanarDirection = Vector3.ProjectOnPlane(desiredDirection, planeNormal);
+        if (currentPlanarDirection.sqrMagnitude < 0.0001f || desiredPlanarDirection.sqrMagnitude < 0.0001f)
+            return;
+
+        Quaternion correction = Quaternion.FromToRotation(
+            currentPlanarDirection.normalized,
+            desiredPlanarDirection.normalized);
+        Quaternion planarCorrection = Quaternion.Slerp(
+            Quaternion.identity,
+            correction,
+            Mathf.Clamp01(influence));
+        bone.rotation = planarCorrection * bone.rotation;
+    }
+
     private IEnumerator PetRoutine()
     {
         petting = true;
@@ -425,36 +874,21 @@ public sealed class DogPetInteraction : MonoBehaviour
         SpawnHearts();
         float focusEndTime = Time.unscaledTime + petFocusDuration;
 
-        if (animator != null && !string.IsNullOrWhiteSpace(petTrigger))
-        {
-            AnimatorControllerParameter[] parameters = animator.parameters;
-            for (int i = 0; i < parameters.Length; i++)
-            {
-                if (parameters[i].name == petTrigger && parameters[i].type == AnimatorControllerParameterType.Trigger)
-                {
-                    animator.SetTrigger(petTrigger);
-                    break;
-                }
-            }
-        }
+        // The imported pet animation can drive the ear/head bones without
+        // moving the face vertices weighted to the neck. Pause it while the
+        // procedural face tilt runs so the whole face shares one motion.
+        petAnimatorPoseCaptured = animator != null;
+        petAnimatorWasEnabled = animator != null && animator.enabled;
+        if (animator != null)
+            animator.enabled = false;
 
-        bool[] eyeStates = new bool[eyeObjects.Length];
-        for (int i = 0; i < eyeObjects.Length; i++)
-        {
-            if (eyeObjects[i] == null)
-                continue;
-
-            eyeStates[i] = eyeObjects[i].gameObject.activeSelf;
-            eyeObjects[i].gameObject.SetActive(false);
-        }
-
-        if (headTransform != null)
+        if (headTransform != null || neckBone != null)
         {
             for (int i = 0; i < headTilts; i++)
             {
                 float direction = i % 2 == 0 ? 1f : -1f;
-                yield return RotateHeadTo(headRestRotation * Quaternion.Euler(0f, 0f, direction * tiltAngle));
-                yield return RotateHeadTo(headRestRotation);
+                yield return RotateFaceTo(direction * tiltAngle);
+                yield return RotateFaceTo(0f);
             }
         }
         else
@@ -466,29 +900,36 @@ public sealed class DogPetInteraction : MonoBehaviour
         if (remainingFocusTime > 0f)
             yield return new WaitForSecondsRealtime(remainingFocusTime);
 
-        for (int i = 0; i < eyeObjects.Length; i++)
-        {
-            if (eyeObjects[i] != null)
-                eyeObjects[i].gameObject.SetActive(eyeStates[i]);
-        }
+        if (petAnimatorPoseCaptured && animator != null)
+            animator.enabled = petAnimatorWasEnabled;
+        petAnimatorPoseCaptured = false;
 
         petting = false;
         SetDogInteractionFocus(false);
     }
 
-    private IEnumerator RotateHeadTo(Quaternion target)
+    private IEnumerator RotateFaceTo(float rollAngle)
     {
-        Quaternion start = headTransform.localRotation;
+        Quaternion headTarget = headRestRotation * Quaternion.Euler(0f, 0f, rollAngle * 0.6f);
+        Quaternion neckTarget = neckRestRotation * Quaternion.Euler(0f, 0f, rollAngle * 0.4f);
+        Quaternion headStart = headTransform != null ? headTransform.localRotation : Quaternion.identity;
+        Quaternion neckStart = neckBone != null ? neckBone.localRotation : Quaternion.identity;
         float elapsed = 0f;
         while (elapsed < tiltDuration)
         {
             elapsed += Time.deltaTime;
             float t = Mathf.SmoothStep(0f, 1f, elapsed / tiltDuration);
-            headTransform.localRotation = Quaternion.Slerp(start, target, t);
+            if (neckBone != null)
+                neckBone.localRotation = Quaternion.Slerp(neckStart, neckTarget, t);
+            if (headTransform != null)
+                headTransform.localRotation = Quaternion.Slerp(headStart, headTarget, t);
             yield return null;
         }
 
-        headTransform.localRotation = target;
+        if (neckBone != null)
+            neckBone.localRotation = neckTarget;
+        if (headTransform != null)
+            headTransform.localRotation = headTarget;
     }
 
     private void CreatePrompt()
@@ -507,7 +948,7 @@ public sealed class DogPetInteraction : MonoBehaviour
         canvasObject.AddComponent<GraphicRaycaster>();
 
         RectTransform canvasRect = canvasObject.GetComponent<RectTransform>();
-        canvasRect.sizeDelta = new Vector2(230f, 52f);
+        canvasRect.sizeDelta = new Vector2(360f, 58f);
         canvasRect.localScale = Vector3.one * 0.004f;
 
         promptBackground = new GameObject("PromptBackground");

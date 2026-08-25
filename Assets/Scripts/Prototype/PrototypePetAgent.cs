@@ -22,9 +22,12 @@ public sealed class PrototypePetAgent : MonoBehaviour
     [Header("Directional Head Look")]
     public bool useDirectionalHeadLook = true;
     [Min(1f)] public float headTurnSpeed = 360f;
-    [Range(5f, 45f)] public float headYawLimit = 30f;
+    [Tooltip("Maximum combined yaw of the neck and head.")]
+    [Range(5f, 45f)] public float headYawLimit = 28f;
     [Range(0.05f, 0.95f)] public float neckTurnShare = 0.35f;
     [Range(0.05f, 1f)] public float bodyTurnSpeedWhileHeadLeads = 0.3f;
+    [Tooltip("The body starts following once the remaining horizontal error is larger than this angle.")]
+    [Range(0f, 45f)] public float bodyTurnDeadZone = 7f;
 
     [Header("State Durations")]
     public Vector2 idleDuration = new Vector2(1.5f, 4f);
@@ -40,6 +43,8 @@ public sealed class PrototypePetAgent : MonoBehaviour
     private Vector3 wanderTarget;
     private float stateTimeRemaining;
     private bool interactionFocus;
+    private bool interactionHeadLookEnabled;
+    private bool carried;
     private Transform headTransform;
     private Transform neckTransform;
     private Quaternion headRestRotation;
@@ -52,16 +57,19 @@ public sealed class PrototypePetAgent : MonoBehaviour
 
     public Transform MovementRoot => movementRoot != null ? movementRoot : transform;
 
+    public bool IsCarried => carried;
+
     /// <summary>
     /// Temporarily takes control away from the random AI so the dog can face
     /// the player during a prompt or a pet interaction.
     /// </summary>
-    public void SetInteractionFocus(bool focused)
+    public void SetInteractionFocus(bool focused, bool enableHeadLook = true)
     {
-        if (interactionFocus == focused)
+        if (interactionFocus == focused && interactionHeadLookEnabled == (focused && enableHeadLook))
             return;
 
         interactionFocus = focused;
+        interactionHeadLookEnabled = focused && enableHeadLook;
         if (focused)
         {
             currentState = PetState.LookAtPlayer;
@@ -71,6 +79,33 @@ public sealed class PrototypePetAgent : MonoBehaviour
         {
             EnterRandomState();
         }
+    }
+
+    /// <summary>
+    /// Suspends autonomous movement while the dog is attached to the player's hold anchor.
+    /// </summary>
+    public void SetCarried(bool value)
+    {
+        if (carried == value)
+            return;
+
+        carried = value;
+        interactionFocus = false;
+        interactionHeadLookEnabled = false;
+
+        if (carried)
+        {
+            if (characterController != null)
+                characterController.enabled = false;
+
+            PlayAnimation(IdleAnimationState);
+            return;
+        }
+
+        if (characterController != null)
+            characterController.enabled = true;
+
+        EnterRandomState();
     }
 
     private void Awake()
@@ -132,10 +167,15 @@ public sealed class PrototypePetAgent : MonoBehaviour
             playerCamera = Camera.main;
         }
 
+        if (carried)
+            return;
+
         if (interactionFocus)
         {
-            // DogPetInteraction owns the head during the pet reaction.
-            UpdateLookAtPlayer(false);
+            // During the prompt the head leads within its realistic yaw cone.
+            // The body catches up once the player is outside that cone. The
+            // actual pet animation can temporarily suppress this to own the head.
+            UpdateLookAtPlayer(interactionHeadLookEnabled);
             return;
         }
 
@@ -233,8 +273,22 @@ public sealed class PrototypePetAgent : MonoBehaviour
             float bodyTurnSpeed = allowHeadLook
                 ? UpdateDirectionalHeadLook(direction)
                 : turnSpeed;
-            RotateTowards(direction, bodyTurnSpeed);
+
+            // Let the head take small corrections first. Once the remaining
+            // error is larger than the small dead zone, the body follows at
+            // the deliberately slower head-leading speed.
+            bool shouldTurnBody = !allowHeadLook ||
+                Mathf.Abs(GetRelativeYaw(direction)) > bodyTurnDeadZone;
+            if (shouldTurnBody)
+                RotateTowards(direction, bodyTurnSpeed);
         }
+    }
+
+    private float GetRelativeYaw(Vector3 direction)
+    {
+        direction.y = 0f;
+        Vector3 localDirection = movementRoot.InverseTransformDirection(direction.normalized);
+        return Mathf.Atan2(localDirection.x, localDirection.z) * Mathf.Rad2Deg;
     }
 
     private void KeepGrounded()
@@ -261,15 +315,18 @@ public sealed class PrototypePetAgent : MonoBehaviour
         Vector3 localDirection = movementRoot.InverseTransformDirection(direction.normalized);
         float desiredYaw = Mathf.Atan2(localDirection.x, localDirection.z) * Mathf.Rad2Deg;
         float limitedYaw = Mathf.Clamp(desiredYaw, -headYawLimit, headYawLimit);
-        float headAlignment = 1f - Mathf.InverseLerp(0f, headYawLimit, Mathf.Abs(limitedYaw));
+        float bodyAlignment = Mathf.InverseLerp(
+            bodyTurnDeadZone,
+            headYawLimit,
+            Mathf.Abs(limitedYaw));
         float bodyTurnSpeed = Mathf.Lerp(
             turnSpeed * bodyTurnSpeedWhileHeadLeads,
             turnSpeed,
-            headAlignment);
+            bodyAlignment);
 
+        float maxStep = headTurnSpeed * Time.deltaTime;
         float neckYaw = limitedYaw * neckTurnShare;
         float headYaw = limitedYaw - neckYaw;
-        float maxStep = headTurnSpeed * Time.deltaTime;
 
         if (neckTransform != null)
         {

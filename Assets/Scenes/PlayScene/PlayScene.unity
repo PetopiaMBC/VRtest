@@ -1122,6 +1122,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: Cartoon Dog
       objectReference: {fileID: 0}
+    - target: {fileID: 6702635459858530726, guid: ad8c2e4e0b206614abbcc03a38753ca9, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 6939384915554859356, guid: ad8c2e4e0b206614abbcc03a38753ca9, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -1337,6 +1341,12 @@ MonoBehaviour:
   turnSpeed: 240
   roomHalfExtent: 4.2
   targetReachDistance: 0.2
+  useDirectionalHeadLook: 1
+  headTurnSpeed: 360
+  headYawLimit: 28
+  neckTurnShare: 0.35
+  bodyTurnSpeedWhileHeadLeads: 0.3
+  bodyTurnDeadZone: 7
   idleDuration: {x: 1.5, y: 4}
   wanderDuration: {x: 3, y: 7}
   lookAtDuration: {x: 1.5, y: 3.5}
@@ -1379,6 +1389,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DogPetInteraction
   interactionDistance: 1.3
+  grabDistance: 1.45
   lookAngle: 38
   promptHeight: 0.72
   playerTransform: {fileID: 1453919416}
@@ -1392,6 +1403,15 @@ MonoBehaviour:
   tiltDuration: 0.22
   petFocusDuration: 2
   promptText: "E  \uC4F0\uB2E4\uB4EC\uAE30"
+  grabPromptText: "Q  \uC7A1\uAE30"
+  releasePromptText: "Q  \uB0B4\uB824\uB193\uAE30"
+  holdLocalPosition: {x: 0, y: -0.66, z: 4}
+  holdLocalEulerAngles: {x: 0, y: 180, z: 0}
+  holdSupportOffset: {x: 0, y: -0.05, z: 0}
+  heldCradleEulerAngles: {x: 0, y: 0, z: 0}
+  heldBodySagAngle: 18
+  heldLimbGravityInfluence: 0.45
+  heldTailGravityInfluence: 0.5
   promptColor: {r: 1, g: 0.86, b: 0.35, a: 1}
 --- !u!1001 &1453919408
 PrefabInstance:
@@ -1419,7 +1439,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122246761220, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 61.4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122246761220, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1439,7 +1459,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122508800755, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 35.73
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122508800755, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1467,7 +1487,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122894124685, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 39.07
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122894124685, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1495,7 +1515,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573833148750, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 32.34
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573833148750, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1531,7 +1551,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574852684551, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 34.8
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574852684551, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1559,7 +1579,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575382347206, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 61.4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575382347206, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1587,7 +1607,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575962273167, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 35.73
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575962273167, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchoredPosition.x
@@ -1928,6 +1948,245 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2035515466}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1001 &2101941705
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 1.3712
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 1.3712
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 1.3712
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -2.2
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 3.4
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: -0.00000004371139
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3075254841230604974, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_Name
+      value: German Shepherd Companion
+      objectReference: {fileID: 0}
+    - target: {fileID: 5290822076645147826, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: f6b820d2bea1238479b67ade5c593c26, type: 2}
+    - target: {fileID: 5290822076645147826, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: 'm_Materials.Array.data[1]'
+      value: 
+      objectReference: {fileID: 2100000, guid: f6b820d2bea1238479b67ade5c593c26, type: 2}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2101941707}
+    - targetCorrespondingSourceObject: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2101941709}
+    - targetCorrespondingSourceObject: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2101941710}
+  m_SourcePrefab: {fileID: 100100000, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+--- !u!1 &2101941706 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+  m_PrefabInstance: {fileID: 2101941705}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2101941707
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2101941706}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0f267dec2fb32a4bb3020803274d0b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShepherdCompanionAI
+  playerDetectionDistance: 3.5
+  playerStopDistance: 1.7
+  playerRunDistance: 2.7
+  runWalkHysteresis: 0.35
+  headYawLimit: 42
+  headTurnSpeed: 7
+  playerTransform: {fileID: 0}
+  playerCamera: {fileID: 0}
+  whistleArrivalDistance: 1.7
+  whistleIdleDurationMin: 2
+  whistleIdleDurationMax: 3
+  walkSpeed: 0.9
+  runSpeed: 3
+  bodyTurnSpeed: 210
+  wanderRadius: 4.5
+  groundOffset: 0.05
+  obstacleCheckDistance: 0.75
+  obstacleCheckRadius: 0.28
+  obstacleCheckHeight: 0.45
+  obstacleAvoidanceDuration: 1.2
+  obstacleAvoidanceAngle: 90
+  obstaclePauseDuration: 0.2
+  obstacleEscapeDistance: 2.5
+  obstacleRepositionStopDistance: 0.35
+  idleDurationMin: 2
+  idleDurationMax: 5
+  walkDurationMin: 3
+  walkDurationMax: 7
+  runDurationMin: 1.2
+  runDurationMax: 2.6
+  ambientRunChance: 0.16
+  animator: {fileID: 0}
+  idleBreathingState: 1 type_Idle Breathing
+  idlePlayingState: 1 type_Idle_Playing
+  walkState: 1 type_Walk_Loop
+  runState: 1 type_Run Loop
+  runLeanRightState: 1 type_Run Lean Right
+  runLeanLeftState: 1 type_Run Lean Left
+  walkTurnRightState: 1 type_Walk_Turn_Right
+  walkTurnLeftState: 1 type_Walk_Turn_Left
+  animationBlendTime: 0.2
+  runAnimationSpeed: 1.3
+  runTurnAngleThreshold: 12
+  runTurnAnimationDuration: 0.35
+  walkTurnAngleThreshold: 12
+  walkTurnAnimationDuration: 0.35
+--- !u!114 &2101941709
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2101941706}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 36800ad6208eacc40acf74edf8281c4f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShepherdSoftGrabInteraction
+  useKeyboardGrab: 1
+  playerCamera: {fileID: 0}
+  grabDistance: 2.2
+  grabBoneName: DEF-spine.010
+  grabPointLocalOffset: {x: 0, y: 0.015, z: -0.055}
+  holdDistance: 3
+  holdVerticalOffset: 0.5
+  holdFollowSpeed: 10
+  holdRotationSpeed: 10
+  grabPointCorrectionSpeed: 24
+  skinStretchAmount: 0.078
+  grabSkinBulge: 0.261
+  grabSkinLift: 0.0884
+  gravityStrength: 0.595
+  bodyGravityInfluence: 1
+  limbGravityInfluence: 1
+  tailGravityInfluence: 1
+  bodyMaximumSagAngle: 60
+  limbMaximumSagAngle: 45
+  tailMaximumSagAngle: 45
+  grabColliderPadding: 0.08
+--- !u!114 &2101941710
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2101941706}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3565c37e63e99864c8a5dd53e55127e5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShepherdVertexGrabInteraction
+  useKeyboardGrab: 1
+  playerCamera: {fileID: 0}
+  grabDistance: 3
+  neckGrabBone: {fileID: 0}
+  neckGrabBoneName: DEF-spine.010
+  neckGripSurfaceOffset: 0.08
+  holdDistance: 3
+  useInteractionDistanceWhenGrabbed: 1
+  minimumInteractionHoldDistance: 0.8
+  maximumInteractionHoldDistance: 3.6
+  heldDistanceExtra: 0.45
+  holdVerticalOffset: -0.2
+  holdVerticalFollow: 1
+  holdFollowSpeed: 10
+  holdRotationSpeed: 10
+  holdTargetSmoothTime: 0.12
+  holdTargetMaximumSpeed: 7
+  heldCameraPitchLimit: 55
+  heldTargetMaximumVerticalTravel: 1
+  heldGroundClearance: 0.12
+  heldBodyMaximumTurnSpeed: 160
+  gravityStrength: 0.5
+  bodyGravityInfluence: 0.9
+  pelvisGravityInfluence: 0.95
+  pelvisHangLengthRatio: 0.88
+  heldSpineMinimumLengthRatio: 0.84
+  heldPelvisBackwardOffset: 0.14
+  heldSpineStraighteningStrength: 0.94
+  spineIkIterations: 6
+  spineIkStrength: 0.9
+  heldHeadLookAngle: 65
+  heldHeadStiffness: 0.92
+  heldHeadMaximumPitch: 18
+  heldHeadUprightSupport: 0.75
+  heldNeckUprightStrength: 0.88
+  heldNeckForwardLean: 0.42
+  heldNeckMaximumAngle: 58
+  limbGravityInfluence: 0.85
+  tailGravityInfluence: 0.9
+  bodyMaximumSagAngle: 78
+  limbMaximumSagAngle: 55
+  hindLegMaximumSagAngle: 78
+  tailMaximumSagAngle: 80
+  deformationFollowSpeed: 6
+  gravityInfluenceRadius: 1.25
 --- !u!134 &2141139606
 PhysicsMaterial:
   m_ObjectHideFlags: 0
@@ -1950,3 +2209,4 @@ SceneRoots:
   - {fileID: 1453919408}
   - {fileID: 984090152}
   - {fileID: 1437462148}
+  - {fileID: 2101941705}
