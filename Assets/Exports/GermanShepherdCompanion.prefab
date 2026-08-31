@@ -251,7 +251,7 @@ MonoBehaviour:
   heldPantingStrength: 1
   heldCollisionMask:
     serializedVersion: 2
-    m_Bits: 4294967291
+    m_Bits: 51
   heldCollisionSkin: 0.025
   heldCollisionBoundsScale: 0.95
   heldCollisionSlideIterations: 3

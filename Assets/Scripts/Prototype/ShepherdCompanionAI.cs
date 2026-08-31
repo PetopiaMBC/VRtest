@@ -799,14 +799,54 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return false;
 
         Vector3 origin = transform.position + Vector3.up * obstacleCheckHeight;
-        return Physics.SphereCast(
+        return TryGetNearestExternalSphereCastHit(
             origin,
             obstacleCheckRadius,
             direction.normalized,
-            out _,
+            distance,
+            out _);
+    }
+
+    private bool TryGetNearestExternalSphereCastHit(
+        Vector3 origin,
+        float radius,
+        Vector3 direction,
+        float distance,
+        out RaycastHit nearestHit)
+    {
+        RaycastHit[] hits = Physics.SphereCastAll(
+            origin,
+            radius,
+            direction,
             distance,
             Physics.DefaultRaycastLayers,
             QueryTriggerInteraction.Ignore);
+
+        bool found = false;
+        float nearestDistance = float.PositiveInfinity;
+        nearestHit = default;
+
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hitCollider = hits[i].collider;
+            if (IsOwnCollider(hitCollider) || hits[i].distance >= nearestDistance)
+                continue;
+
+            nearestDistance = hits[i].distance;
+            nearestHit = hits[i];
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool IsOwnCollider(Collider candidate)
+    {
+        if (candidate == null)
+            return false;
+
+        Transform candidateTransform = candidate.transform;
+        return candidateTransform == transform || candidateTransform.IsChildOf(transform);
     }
 
     private bool TryGetObstacleAvoidanceDirection(out Vector3 avoidanceDirection)
@@ -856,14 +896,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         Vector3 origin = transform.position + Vector3.up * obstacleCheckHeight;
         float safeDistance = obstacleEscapeDistance;
 
-        if (Physics.SphereCast(
+        if (TryGetNearestExternalSphereCastHit(
             origin,
             obstacleCheckRadius,
             normalizedDirection,
-            out RaycastHit hit,
             obstacleEscapeDistance,
-            Physics.DefaultRaycastLayers,
-            QueryTriggerInteraction.Ignore))
+            out RaycastHit hit))
         {
             safeDistance = Mathf.Max(
                 obstacleRepositionStopDistance,
@@ -915,10 +953,30 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private void KeepOnGround()
     {
         Ray ray = new Ray(transform.position + Vector3.up * 1.5f, Vector3.down);
-        if (Physics.Raycast(ray, out RaycastHit hit, 4f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        RaycastHit[] hits = Physics.RaycastAll(
+            ray,
+            4f,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+
+        bool foundGround = false;
+        float nearestDistance = float.PositiveInfinity;
+        RaycastHit groundHit = default;
+
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (IsOwnCollider(hits[i].collider) || hits[i].distance >= nearestDistance)
+                continue;
+
+            nearestDistance = hits[i].distance;
+            groundHit = hits[i];
+            foundGround = true;
+        }
+
+        if (foundGround)
         {
             Vector3 position = transform.position;
-            position.y = hit.point.y + groundOffset;
+            position.y = groundHit.point.y + groundOffset;
             transform.position = position;
         }
     }
