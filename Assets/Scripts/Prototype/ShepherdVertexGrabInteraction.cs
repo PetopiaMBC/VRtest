@@ -123,6 +123,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [SerializeField, Range(0.2f, 2f)] private float naturalLowerDuration = 0.7f;
     [Tooltip("Clearance kept between the released dog's rendered feet and the floor.")]
     [SerializeField, Range(0.01f, 0.15f)] private float naturalReleaseGroundClearance = 0.04f;
+    [Tooltip("Seconds used to blend from the final lowered pose into the resumed idle animation.")]
+    [SerializeField, Range(0.1f, 0.75f)] private float naturalReleaseAnimationBlendDuration = 0.32f;
 
     [Header("Held panting")]
     [Tooltip("Play the breathing clip's jaw and tongue motion while the dog is held.")]
@@ -130,10 +132,16 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [Tooltip("Optional override. When empty, a controller clip containing this name is selected automatically.")]
     [SerializeField] private AnimationClip heldPantingClip;
     [SerializeField] private string heldPantingClipName = "Idle Breathing";
+    [Tooltip("Controller clip names used at random while the dog is held. The current clip completes one full cycle before another clip is selected.")]
+    [SerializeField] private string[] heldIdleClipNames = Array.Empty<string>();
+    [Tooltip("Seconds used to blend the face and head from one held idle into the next.")]
+    [SerializeField, Range(0.05f, 0.75f)] private float heldIdleTransitionDuration = 0.28f;
     [Tooltip("Playback speed of the held panting loop.")]
     [SerializeField, Range(0.5f, 2.5f)] private float heldPantingSpeed = 1.15f;
     [Tooltip("Strength of jaw and tongue animation while held.")]
     [SerializeField, Range(0f, 1f)] private float heldPantingStrength = 1f;
+    [Tooltip("Strength of the held idle clip's subtle head movement.")]
+    [SerializeField, Range(0f, 0.5f)] private float heldHeadIdleStrength = 0.18f;
 
     [Header("Held collision")]
     [Tooltip("Layers that block the dog while it is being held.")]
@@ -157,7 +165,16 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         public Vector3 localScale;
     }
 
+    private struct HeldIdleBonePose
+    {
+        public bool valid;
+        public Vector3 localPosition;
+        public Quaternion localRotation;
+        public Vector3 localScale;
+    }
+
     private readonly List<BoneRestPose> restPoses = new List<BoneRestPose>();
+    private readonly List<BoneRestPose> releaseStartPoses = new List<BoneRestPose>();
     private readonly RaycastHit[] heldCollisionHits = new RaycastHit[32];
     private readonly Collider[] heldOverlapResults = new Collider[32];
     private GameObject heldCollisionProbeObject;
@@ -167,7 +184,20 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private Transform heldPantingSamplerTongue;
     private Transform heldPantingSamplerTongueMiddle;
     private Transform heldPantingSamplerTongueTip;
+    private Transform heldPantingSamplerHead;
+    private Quaternion heldPantingSamplerHeadRestRotation = Quaternion.identity;
+    private readonly List<AnimationClip> heldIdleClips = new List<AnimationClip>();
     private float heldPantingTime;
+    private int heldIdleClipIndex = -1;
+    private int previousHeldIdleClipIndex = -1;
+    private float heldIdleTransitionTime;
+    private bool heldIdleTransitionActive;
+    private bool heldIdleClipsResolved;
+    private HeldIdleBonePose heldIdleTransitionHead;
+    private HeldIdleBonePose heldIdleTransitionJaw;
+    private HeldIdleBonePose heldIdleTransitionTongue;
+    private HeldIdleBonePose heldIdleTransitionTongueMiddle;
+    private HeldIdleBonePose heldIdleTransitionTongueTip;
 
     private Animator animator;
     private ShepherdCompanionAI shepherdAI;
@@ -204,6 +234,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private Transform tongueBone;
     private Transform tongueMiddleBone;
     private Transform tongueTipBone;
+    private Vector3 headForwardAxisLocal = Vector3.forward;
+    private Vector3 headUpAxisLocal = Vector3.up;
 
     private bool holding;
     private Vector3 rootVelocity;
@@ -227,6 +259,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private Vector3 lowerTargetRootPosition;
     private float lowerGroundHeight;
     private bool lowerGroundFound;
+    private bool releasePoseBlending;
+    private float releasePoseBlendStartTime;
     private float spineChainLength;
     private float heldBodyDropBelowGrip;
     private bool grabTargetInitialized;
@@ -269,6 +303,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
     private void LateUpdate()
     {
+        if (releasePoseBlending)
+            UpdateReleasePoseBlend();
+
         if (!holding || playerCamera == null || neckGrabBone == null)
             return;
 
@@ -291,6 +328,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     {
         if (holding)
             CompleteReleaseShepherd();
+
+        releasePoseBlending = false;
+        releaseStartPoses.Clear();
     }
 
     private void OnDestroy()
@@ -411,7 +451,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         rootVelocity = Vector3.zero;
         grabTargetVelocity = Vector3.zero;
         heldPoseBlend = 0f;
-        heldPantingTime = 0f;
+        BeginHeldIdleSequence();
+        releasePoseBlending = false;
+        releaseStartPoses.Clear();
 
         // 애니메이션 뼈를 기본 포즈로 되돌리기 전에 실제로 상호작용한 목 뒤 위치를 저장합니다.
         // 이 위치와 거리를 사용해야 강아지가 고정된 3m 지점으로 순간 이동하지 않습니다.
@@ -507,13 +549,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         grabTargetVelocity = Vector3.zero;
 
         lowerGroundFound = TryFindNaturalReleaseGround(out lowerGroundHeight);
-        if (lowerGroundFound && skinnedRenderer != null)
-        {
-            float verticalCorrection =
-                lowerGroundHeight + naturalReleaseGroundClearance -
-                skinnedRenderer.bounds.min.y;
-            lowerTargetRootPosition += Vector3.up * verticalCorrection;
-        }
+        if (lowerGroundFound)
+            lowerTargetRootPosition.y = GetGroundedReleaseRootY(lowerGroundHeight);
     }
 
     private void CompleteReleaseShepherd()
@@ -521,16 +558,13 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         if (!holding)
             return;
 
-        RestoreBonePose();
+        CaptureReleasePose();
 
-        if (loweringTransition && lowerGroundFound && skinnedRenderer != null)
+        if (loweringTransition && lowerGroundFound)
         {
-            float finalGroundCorrection =
-                lowerGroundHeight + naturalReleaseGroundClearance -
-                skinnedRenderer.bounds.min.y;
-            Vector3 groundedPosition =
-                transform.position + Vector3.up * finalGroundCorrection;
-            transform.position = MoveHeldRootWithCollision(groundedPosition);
+            Vector3 groundedPosition = transform.position;
+            groundedPosition.y = GetGroundedReleaseRootY(lowerGroundHeight);
+            transform.position = groundedPosition;
         }
 
         holding = false;
@@ -558,7 +592,25 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         }
 
         if (shepherdAI != null)
+        {
             shepherdAI.enabled = aiWasEnabled;
+            if (aiWasEnabled)
+                shepherdAI.ResumeAfterGrab(naturalReleaseAnimationBlendDuration);
+        }
+
+        if (animator != null && animator.enabled && releaseStartPoses.Count > 0)
+        {
+            animator.Update(0f);
+            releasePoseBlendStartTime = Time.time;
+            releasePoseBlending = true;
+            UpdateReleasePoseBlend();
+        }
+        else
+        {
+            RestoreBonePose();
+            releasePoseBlending = false;
+            releaseStartPoses.Clear();
+        }
 
         RefreshGrabCollisionMesh();
     }
@@ -574,8 +626,29 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             lowerTargetRootPosition,
             easedProgress);
 
-        transform.position = MoveHeldRootWithCollision(desiredRootPosition);
+        Vector3 horizontalTarget = new Vector3(
+            desiredRootPosition.x,
+            transform.position.y,
+            desiredRootPosition.z);
+        Vector3 resolvedRootPosition = MoveHeldRootWithCollision(horizontalTarget);
+        resolvedRootPosition.y = desiredRootPosition.y;
+        transform.position = resolvedRootPosition;
         rootVelocity = Vector3.zero;
+    }
+
+    private float GetGroundedReleaseRootY(float groundHeight)
+    {
+        if (shepherdAI != null)
+            return shepherdAI.GetGroundedRootY(groundHeight);
+
+        if (skinnedRenderer != null)
+        {
+            return transform.position.y +
+                   groundHeight + naturalReleaseGroundClearance -
+                   skinnedRenderer.bounds.min.y;
+        }
+
+        return transform.position.y;
     }
 
     private bool TryFindNaturalReleaseGround(out float groundHeight)
@@ -639,53 +712,80 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         restPoses.Clear();
 
         Transform[] allTransforms = GetComponentsInChildren<Transform>(true);
+        Transform shibaSkeletonRoot = FindBone("Root_bone");
         for (int i = 0; i < allTransforms.Length; i++)
         {
-            if (allTransforms[i].name.StartsWith("DEF-", StringComparison.OrdinalIgnoreCase))
+            Transform candidate = allTransforms[i];
+            bool isShepherdBone = candidate.name.StartsWith(
+                "DEF-",
+                StringComparison.OrdinalIgnoreCase);
+            bool isShibaBone = shibaSkeletonRoot != null &&
+                               (candidate == shibaSkeletonRoot ||
+                                candidate.IsChildOf(shibaSkeletonRoot));
+            if (isShepherdBone || isShibaBone)
             {
                 restPoses.Add(new BoneRestPose
                 {
-                    bone = allTransforms[i],
-                    localPosition = allTransforms[i].localPosition,
-                    localRotation = allTransforms[i].localRotation,
-                    localScale = allTransforms[i].localScale
+                    bone = candidate,
+                    localPosition = candidate.localPosition,
+                    localRotation = candidate.localRotation,
+                    localScale = candidate.localScale
                 });
             }
         }
 
-        torsoBase = FindBone("DEF-spine.004");
-        torsoLower = FindBone("DEF-spine.005");
-        torsoMid = FindBone("DEF-spine.006");
-        torsoUpper = FindBone("DEF-spine.007");
-        torsoNeck = FindBone("DEF-spine.008");
-        neckBase = FindBone("DEF-spine.009");
-        neckGrabBone = FindBone(neckGrabBoneName);
+        torsoBase = FindBoneAny("DEF-spine.004", "Spine_base");
+        torsoLower = FindBoneAny("DEF-spine.005", "Spine_02");
+        torsoMid = FindBoneAny("DEF-spine.006", "Spine_03");
+        torsoUpper = FindBoneAny("DEF-spine.007", "Spine_04");
+        torsoNeck = FindBoneAny("DEF-spine.008", "Spine_05");
+        neckBase = FindBoneAny("DEF-spine.009", "neck");
+        neckGrabBone = FindBone(neckGrabBoneName) ??
+                       FindBoneAny("DEF-spine.010", "neck", "Spine_05");
 
-        frontShoulderLeft = FindBone("DEF-shoulder.L");
-        frontShoulderRight = FindBone("DEF-shoulder.R");
-        frontThighLeft = FindBone("DEF-front_thigh.L");
-        frontThighRight = FindBone("DEF-front_thigh.R");
-        frontShinLeft = FindBone("DEF-front_shin.L");
-        frontShinRight = FindBone("DEF-front_shin.R");
-        frontFootLeft = FindBone("DEF-front_foot.L");
-        frontFootRight = FindBone("DEF-front_foot.R");
-        hindThighLeft = FindBone("DEF-thigh.L");
-        hindThighRight = FindBone("DEF-thigh.R");
-        hindShinLeft = FindBone("DEF-shin.L");
-        hindShinRight = FindBone("DEF-shin.R");
-        hindFootLeft = FindBone("DEF-foot.L");
-        hindFootRight = FindBone("DEF-foot.R");
+        frontShoulderLeft = FindBoneAny("DEF-shoulder.L", "hip_f.L");
+        frontShoulderRight = FindBoneAny("DEF-shoulder.R", "hip_f.R");
+        frontThighLeft = FindBoneAny("DEF-front_thigh.L", "thigh_f.L");
+        frontThighRight = FindBoneAny("DEF-front_thigh.R", "thigh_f.R");
+        frontShinLeft = FindBoneAny("DEF-front_shin.L", "leg_f.L", "shin_f.L");
+        frontShinRight = FindBoneAny("DEF-front_shin.R", "leg_f.R", "shin_f.R");
+        frontFootLeft = FindBoneAny("DEF-front_foot.L", "foot_f.L");
+        frontFootRight = FindBoneAny("DEF-front_foot.R", "foot_f.R");
+        hindThighLeft = FindBoneAny("DEF-thigh.L", "thigh_b.L");
+        hindThighRight = FindBoneAny("DEF-thigh.R", "thigh_b.R");
+        hindShinLeft = FindBoneAny("DEF-shin.L", "leg_b.L", "shin_b.L");
+        hindShinRight = FindBoneAny("DEF-shin.R", "leg_b.R", "shin_b.R");
+        hindFootLeft = FindBoneAny("DEF-foot.L", "foot_b.L");
+        hindFootRight = FindBoneAny("DEF-foot.R", "foot_b.R");
 
-        tailBase = FindBone("DEF-spine.003");
-        tailMiddle = FindBone("DEF-spine.002");
-        tailTip = FindBone("DEF-spine.001");
-        tailEnd = FindBone("DEF-spine");
-        headBone = FindBone("DEF-spine.011");
-        jawBone = FindBone("DEF-jaw");
-        tongueBone = FindBone("DEF-tongue");
-        tongueMiddleBone = FindBone("DEF-tongue.001");
-        tongueTipBone = FindBone("DEF-tongue.002");
+        tailBase = FindBoneAny("DEF-spine.003", "Tail_01");
+        tailMiddle = FindBoneAny("DEF-spine.002", "Tail_02");
+        tailTip = FindBoneAny("DEF-spine.001", "Tail_04", "Tail_03");
+        tailEnd = FindBoneAny("DEF-spine", "Tail_05");
+        headBone = FindBoneAny("DEF-spine.011", "head");
+        jawBone = FindBoneAny("DEF-jaw", "mouth");
+        tongueBone = FindBoneAny("DEF-tongue", "tongue_1");
+        tongueMiddleBone = FindBoneAny("DEF-tongue.001", "tongue_2");
+        tongueTipBone = FindBoneAny("DEF-tongue.002", "tongue_3", "tongue_4");
+        CacheHeadOrientationAxes();
         spineChainLength = CalculateSpineChainLength();
+    }
+
+    private void CacheHeadOrientationAxes()
+    {
+        if (headBone == null)
+            return;
+
+        // 얼굴 정면축은 리그마다 다릅니다. 셰퍼드는 거의 로컬 +Z지만 시바는 로컬 +Y이므로,
+        // 루트의 전방/상방을 머리 로컬 공간에 저장해 어느 리그에서도 같은 얼굴 프레임을 복원합니다.
+        headForwardAxisLocal = headBone.InverseTransformDirection(transform.forward).normalized;
+        Vector3 localUp = headBone.InverseTransformDirection(transform.up);
+        headUpAxisLocal = Vector3.ProjectOnPlane(localUp, headForwardAxisLocal).normalized;
+
+        if (headForwardAxisLocal.sqrMagnitude < 0.0001f)
+            headForwardAxisLocal = Vector3.forward;
+        if (headUpAxisLocal.sqrMagnitude < 0.0001f)
+            headUpAxisLocal = Vector3.up;
     }
 
     private Transform FindBone(string boneName)
@@ -698,6 +798,18 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         {
             if (bones[i].name.Equals(boneName, StringComparison.OrdinalIgnoreCase))
                 return bones[i];
+        }
+
+        return null;
+    }
+
+    private Transform FindBoneAny(params string[] boneNames)
+    {
+        for (int i = 0; i < boneNames.Length; i++)
+        {
+            Transform bone = FindBone(boneNames[i]);
+            if (bone != null)
+                return bone;
         }
 
         return null;
@@ -720,6 +832,66 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private void RestoreBonePose()
     {
         ResetBonePose();
+    }
+
+    private void CaptureReleasePose()
+    {
+        releaseStartPoses.Clear();
+        for (int i = 0; i < restPoses.Count; i++)
+        {
+            Transform bone = restPoses[i].bone;
+            if (bone == null)
+                continue;
+
+            releaseStartPoses.Add(new BoneRestPose
+            {
+                bone = bone,
+                localPosition = bone.localPosition,
+                localRotation = bone.localRotation,
+                localScale = bone.localScale
+            });
+        }
+    }
+
+    private void UpdateReleasePoseBlend()
+    {
+        if (!releasePoseBlending || animator == null || !animator.enabled)
+            return;
+
+        float duration = Mathf.Max(0.01f, naturalReleaseAnimationBlendDuration);
+        float progress = Mathf.Clamp01(
+            (Time.time - releasePoseBlendStartTime) / duration);
+        float blend = Mathf.SmoothStep(0f, 1f, progress);
+
+        for (int i = 0; i < releaseStartPoses.Count; i++)
+        {
+            BoneRestPose start = releaseStartPoses[i];
+            if (start.bone == null)
+                continue;
+
+            Vector3 animationPosition = start.bone.localPosition;
+            Quaternion animationRotation = start.bone.localRotation;
+            Vector3 animationScale = start.bone.localScale;
+
+            start.bone.localPosition = Vector3.Lerp(
+                start.localPosition,
+                animationPosition,
+                blend);
+            start.bone.localRotation = Quaternion.Slerp(
+                start.localRotation,
+                animationRotation,
+                blend);
+            start.bone.localScale = Vector3.Lerp(
+                start.localScale,
+                animationScale,
+                blend);
+        }
+
+        if (progress < 1f)
+            return;
+
+        releasePoseBlending = false;
+        releaseStartPoses.Clear();
     }
 
     #endregion
@@ -1309,21 +1481,70 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             return;
 
         float clipLength = Mathf.Max(0.01f, heldPantingClip.length);
-        heldPantingTime = Mathf.Repeat(
-            heldPantingTime + Time.deltaTime * heldPantingSpeed,
-            clipLength);
+        heldPantingTime += Time.deltaTime * heldPantingSpeed;
+        if (heldPantingTime >= clipLength)
+        {
+            CaptureHeldIdleTransitionPose();
+            SelectNextHeldIdleClip();
+            heldPantingTime = 0f;
+            heldIdleTransitionTime = 0f;
+            heldIdleTransitionActive = heldIdleClips.Count > 1 &&
+                heldIdleTransitionDuration > 0f;
+        }
+
         heldPantingClip.SampleAnimation(heldPantingSamplerRoot, heldPantingTime);
 
+        float transitionBlend = 1f;
+        if (heldIdleTransitionActive)
+        {
+            heldIdleTransitionTime += Time.deltaTime;
+            transitionBlend = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.Clamp01(
+                    heldIdleTransitionTime /
+                    Mathf.Max(0.01f, heldIdleTransitionDuration)));
+
+            if (transitionBlend >= 1f)
+                heldIdleTransitionActive = false;
+        }
+
         float blend = Mathf.Clamp01(heldPantingStrength * heldPoseBlend);
-        CopyHeldPantingBone(jawBone, heldPantingSamplerJaw, blend);
-        CopyHeldPantingBone(tongueBone, heldPantingSamplerTongue, blend);
-        CopyHeldPantingBone(tongueMiddleBone, heldPantingSamplerTongueMiddle, blend);
-        CopyHeldPantingBone(tongueTipBone, heldPantingSamplerTongueTip, blend);
+        ApplyHeldHeadIdleMotion(
+            Mathf.Clamp01(heldHeadIdleStrength * heldPoseBlend),
+            transitionBlend);
+        CopyHeldPantingBone(
+            jawBone,
+            heldPantingSamplerJaw,
+            heldIdleTransitionJaw,
+            blend,
+            transitionBlend);
+        CopyHeldPantingBone(
+            tongueBone,
+            heldPantingSamplerTongue,
+            heldIdleTransitionTongue,
+            blend,
+            transitionBlend);
+        CopyHeldPantingBone(
+            tongueMiddleBone,
+            heldPantingSamplerTongueMiddle,
+            heldIdleTransitionTongueMiddle,
+            blend,
+            transitionBlend);
+        CopyHeldPantingBone(
+            tongueTipBone,
+            heldPantingSamplerTongueTip,
+            heldIdleTransitionTongueTip,
+            blend,
+            transitionBlend);
     }
 
     private void EnsureHeldPantingSampler()
     {
-        ResolveHeldPantingClip();
+        ResolveHeldIdleClips();
+        if (heldPantingClip == null)
+            SelectNextHeldIdleClip();
+
         if (heldPantingClip == null || animator == null || heldPantingSamplerRoot != null)
             return;
 
@@ -1340,31 +1561,140 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         for (int i = 0; i < animator.transform.childCount; i++)
             CloneHeldPantingHierarchy(animator.transform.GetChild(i), samplerRoot);
 
-        heldPantingSamplerJaw = FindHeldPantingSamplerBone("DEF-jaw");
-        heldPantingSamplerTongue = FindHeldPantingSamplerBone("DEF-tongue");
-        heldPantingSamplerTongueMiddle = FindHeldPantingSamplerBone("DEF-tongue.001");
-        heldPantingSamplerTongueTip = FindHeldPantingSamplerBone("DEF-tongue.002");
+        heldPantingSamplerHead = FindHeldPantingSamplerBoneAny(
+            "DEF-spine.011", "head");
+        heldPantingSamplerJaw = FindHeldPantingSamplerBoneAny(
+            "DEF-jaw", "mouth");
+        heldPantingSamplerTongue = FindHeldPantingSamplerBoneAny(
+            "DEF-tongue", "tongue_1");
+        heldPantingSamplerTongueMiddle = FindHeldPantingSamplerBoneAny(
+            "DEF-tongue.001", "tongue_2");
+        heldPantingSamplerTongueTip = FindHeldPantingSamplerBoneAny(
+            "DEF-tongue.002", "tongue_3", "tongue_4");
+
+        if (heldPantingSamplerHead != null)
+            heldPantingSamplerHeadRestRotation = heldPantingSamplerHead.localRotation;
     }
 
-    private void ResolveHeldPantingClip()
+    private void BeginHeldIdleSequence()
     {
-        if (heldPantingClip != null || animator == null ||
-            animator.runtimeAnimatorController == null)
+        ResolveHeldIdleClips();
+        heldPantingTime = 0f;
+        heldIdleTransitionTime = 0f;
+        heldIdleTransitionActive = false;
+        SelectNextHeldIdleClip();
+    }
+
+    private void ResolveHeldIdleClips()
+    {
+        if (heldIdleClipsResolved)
+            return;
+
+        heldIdleClipsResolved = true;
+        heldIdleClips.Clear();
+        AnimationClip explicitlyAssignedClip = heldPantingClip;
+
+        if (explicitlyAssignedClip != null)
+            heldIdleClips.Add(explicitlyAssignedClip);
+
+        if (animator == null || animator.runtimeAnimatorController == null)
             return;
 
         AnimationClip[] clips = animator.runtimeAnimatorController.animationClips;
-        for (int i = 0; i < clips.Length; i++)
+        if (heldIdleClipNames != null)
         {
-            AnimationClip clip = clips[i];
-            if (clip != null &&
-                clip.name.IndexOf(
-                    heldPantingClipName,
-                    StringComparison.OrdinalIgnoreCase) >= 0)
+            for (int nameIndex = 0; nameIndex < heldIdleClipNames.Length; nameIndex++)
             {
-                heldPantingClip = clip;
-                return;
+                string candidateName = heldIdleClipNames[nameIndex];
+                if (string.IsNullOrWhiteSpace(candidateName))
+                    continue;
+
+                for (int clipIndex = 0; clipIndex < clips.Length; clipIndex++)
+                {
+                    AnimationClip candidate = clips[clipIndex];
+                    if (candidate != null &&
+                        candidate.name.Equals(
+                            candidateName,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !heldIdleClips.Contains(candidate))
+                    {
+                        heldIdleClips.Add(candidate);
+                        break;
+                    }
+                }
             }
         }
+
+        // Older dog setups only serialize one search name. Preserve that behavior
+        // when none of the multi-idle names exist in their controller.
+        if (heldIdleClips.Count == 0 && !string.IsNullOrWhiteSpace(heldPantingClipName))
+        {
+            for (int i = 0; i < clips.Length; i++)
+            {
+                AnimationClip candidate = clips[i];
+                if (candidate != null &&
+                    candidate.name.IndexOf(
+                        heldPantingClipName,
+                        StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    heldIdleClips.Add(candidate);
+                    break;
+                }
+            }
+        }
+
+        heldPantingClip = null;
+        heldIdleClipIndex = -1;
+        previousHeldIdleClipIndex = -1;
+    }
+
+    private void SelectNextHeldIdleClip()
+    {
+        if (heldIdleClips.Count == 0)
+        {
+            heldPantingClip = null;
+            heldIdleClipIndex = -1;
+            return;
+        }
+
+        int nextIndex = 0;
+        if (heldIdleClips.Count > 1)
+        {
+            do
+            {
+                nextIndex = UnityEngine.Random.Range(0, heldIdleClips.Count);
+            }
+            while (nextIndex == previousHeldIdleClipIndex);
+        }
+
+        heldIdleClipIndex = nextIndex;
+        previousHeldIdleClipIndex = nextIndex;
+        heldPantingClip = heldIdleClips[nextIndex];
+    }
+
+    private void CaptureHeldIdleTransitionPose()
+    {
+        heldIdleTransitionHead = CaptureHeldIdleBonePose(heldPantingSamplerHead);
+        heldIdleTransitionJaw = CaptureHeldIdleBonePose(heldPantingSamplerJaw);
+        heldIdleTransitionTongue = CaptureHeldIdleBonePose(heldPantingSamplerTongue);
+        heldIdleTransitionTongueMiddle = CaptureHeldIdleBonePose(
+            heldPantingSamplerTongueMiddle);
+        heldIdleTransitionTongueTip = CaptureHeldIdleBonePose(
+            heldPantingSamplerTongueTip);
+    }
+
+    private static HeldIdleBonePose CaptureHeldIdleBonePose(Transform bone)
+    {
+        if (bone == null)
+            return default;
+
+        return new HeldIdleBonePose
+        {
+            valid = true,
+            localPosition = bone.localPosition,
+            localRotation = bone.localRotation,
+            localScale = bone.localScale
+        };
     }
 
     private static Transform CloneHeldPantingHierarchy(
@@ -1405,25 +1735,82 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         return null;
     }
 
-    private static void CopyHeldPantingBone(
+    private Transform FindHeldPantingSamplerBoneAny(params string[] boneNames)
+    {
+        for (int i = 0; i < boneNames.Length; i++)
+        {
+            Transform bone = FindHeldPantingSamplerBone(boneNames[i]);
+            if (bone != null)
+                return bone;
+        }
+
+        return null;
+    }
+
+    private void ApplyHeldHeadIdleMotion(float blend, float transitionBlend)
+    {
+        if (headBone == null || heldPantingSamplerHead == null || blend <= 0f)
+            return;
+
+        Quaternion sampledRotation = heldPantingSamplerHead.localRotation;
+        if (heldIdleTransitionActive && heldIdleTransitionHead.valid)
+        {
+            sampledRotation = Quaternion.Slerp(
+                heldIdleTransitionHead.localRotation,
+                sampledRotation,
+                transitionBlend);
+        }
+
+        Quaternion sampledDelta =
+            sampledRotation *
+            Quaternion.Inverse(heldPantingSamplerHeadRestRotation);
+        Quaternion blendedDelta = Quaternion.Slerp(
+            Quaternion.identity,
+            sampledDelta,
+            blend);
+        headBone.localRotation = blendedDelta * headBone.localRotation;
+    }
+
+    private void CopyHeldPantingBone(
         Transform target,
         Transform sampled,
-        float blend)
+        HeldIdleBonePose transitionFrom,
+        float blend,
+        float transitionBlend)
     {
         if (target == null || sampled == null || blend <= 0f)
             return;
 
+        Vector3 sampledPosition = sampled.localPosition;
+        Quaternion sampledRotation = sampled.localRotation;
+        Vector3 sampledScale = sampled.localScale;
+        if (heldIdleTransitionActive && transitionFrom.valid)
+        {
+            sampledPosition = Vector3.Lerp(
+                transitionFrom.localPosition,
+                sampledPosition,
+                transitionBlend);
+            sampledRotation = Quaternion.Slerp(
+                transitionFrom.localRotation,
+                sampledRotation,
+                transitionBlend);
+            sampledScale = Vector3.Lerp(
+                transitionFrom.localScale,
+                sampledScale,
+                transitionBlend);
+        }
+
         target.localPosition = Vector3.Lerp(
             target.localPosition,
-            sampled.localPosition,
+            sampledPosition,
             blend);
         target.localRotation = Quaternion.Slerp(
             target.localRotation,
-            sampled.localRotation,
+            sampledRotation,
             blend);
         target.localScale = Vector3.Lerp(
             target.localScale,
-            sampled.localScale,
+            sampledScale,
             blend);
     }
 
@@ -1467,9 +1854,17 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         Quaternion stableFaceFrame = Quaternion.LookRotation(
             stableLookDirection.normalized,
             Vector3.up);
-        // DEF-jaw가 머리뼈의 로컬 +Z 앞쪽에 있으므로 headBone.forward가 실제 얼굴 정면축입니다.
-        // 초기 몸 회전 오프셋을 섞지 않고 이 축을 카메라에 직접 맞춰 턱 아래가 아닌 얼굴을 보여 줍니다.
-        Quaternion desiredRotation = stableFaceFrame;
+        Vector3 currentFaceForward = headBone.TransformDirection(headForwardAxisLocal);
+        Vector3 currentFaceUp = headBone.TransformDirection(headUpAxisLocal);
+        Quaternion currentFaceFrame = Quaternion.LookRotation(
+            currentFaceForward.normalized,
+            currentFaceUp.normalized);
+
+        // 머리뼈 자체의 +Z를 얼굴 전방이라고 가정하지 않고, 캐시한 리그별 얼굴 프레임이
+        // 목표 프레임을 향하도록 델타 회전만 적용합니다. 시바처럼 얼굴축이 로컬 +Y인 경우에도
+        // 180도 반대 해를 번갈아 선택하지 않아 좌우 플립이 사라집니다.
+        Quaternion faceDelta = stableFaceFrame * Quaternion.Inverse(currentFaceFrame);
+        Quaternion desiredRotation = faceDelta * headBone.rotation;
         Quaternion angleLimitedRotation = Quaternion.RotateTowards(
             headBone.rotation,
             desiredRotation,

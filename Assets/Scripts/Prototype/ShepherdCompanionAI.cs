@@ -17,6 +17,14 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         FollowPlayer
     }
 
+    private enum IdleSequencePhase
+    {
+        None,
+        Start,
+        Loop,
+        End
+    }
+
     #endregion
 
     #region 인스펙터 설정
@@ -52,6 +60,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Min(0.05f)] private float walkSpeed = 0.9f;
     [Tooltip("셰퍼드가 달리는 속도입니다.")]
     [SerializeField, Min(0.05f)] private float runSpeed = 1.35f;
+    [Tooltip("정지/걷기/달리기 속도가 바뀔 때 초당 가감속량입니다.")]
+    [SerializeField, Min(0.1f)] private float locomotionAcceleration = 4f;
     [Tooltip("몸통이 이동 방향으로 회전하는 속도입니다.")]
     [SerializeField, Min(1f)] private float bodyTurnSpeed = 210f;
     [Tooltip("플레이어가 멀리 있을 때 셰퍼드가 돌아다닐 수 있는 중심점 주변 반경입니다.")]
@@ -100,6 +110,22 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private string idleBreathingState = "1 type_Idle Breathing";
     [Tooltip("가만히 놀고 있는 애니메이터 상태 이름입니다.")]
     [SerializeField] private string idlePlayingState = "1 type_Idle_Playing";
+    [Tooltip("비워 두면 기존 Idle Breathing/Playing 방식을 사용합니다. 등록된 상태는 같은 상태를 연속 선택하지 않고 동일 확률로 한 사이클씩 재생합니다.")]
+    [SerializeField] private string[] idleStates = new string[0];
+    [Tooltip("시작-반복-마무리로 구성된 특수 Idle의 시작 상태입니다. 세 상태가 모두 지정되면 일반 Idle 한 개와 같은 확률로 선택됩니다.")]
+    [SerializeField] private string idleSequenceStartState = "";
+    [SerializeField] private string idleSequenceLoopState = "";
+    [SerializeField] private string idleSequenceEndState = "";
+    [Tooltip("Idle을 새로 고를 때 앉기 또는 엎드리기 휴식 시퀀스를 선택할 확률입니다.")]
+    [SerializeField, Range(0f, 0.5f)] private float restIdleChance = 0.18f;
+    [SerializeField] private string sittingStartState = "";
+    [SerializeField] private string[] sittingLoopStates = new string[0];
+    [SerializeField] private string sittingEndState = "";
+    [SerializeField] private string lyingStartState = "";
+    [SerializeField] private string[] lyingLoopStates = new string[0];
+    [SerializeField] private string lyingEndState = "";
+    [Tooltip("내려놓은 직후 완전히 재생한 다음 이동을 허용할 애니메이터 상태입니다. 비워 두면 바로 기본 Idle로 복귀합니다.")]
+    [SerializeField] private string releaseState = "";
     [Tooltip("걷기 애니메이터 상태 이름입니다.")]
     [SerializeField] private string walkState = "1 type_Walk_Loop";
     [Tooltip("달리기 애니메이터 상태 이름입니다.")]
@@ -114,8 +140,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private string walkTurnLeftState = "1 type_Walk_Turn_Left";
     [Tooltip("애니메이션 상태가 바뀔 때 섞이는 시간입니다. 너무 짧으면 끊겨 보일 수 있습니다.")]
     [SerializeField, Min(0.01f)] private float animationBlendTime = 0.2f;
+    [Tooltip("걷기와 달리기 사이에서 발 디딤 위상을 유지하며 섞는 시간입니다.")]
+    [SerializeField, Min(0.05f)] private float locomotionBlendTime = 0.28f;
     [Tooltip("달리기 애니메이션의 재생 속도입니다. 캐릭터의 실제 이동 속도와 별개로, 다리 움직임이 느려 보일 때 올려주세요.")]
     [SerializeField, Min(0.1f)] private float runAnimationSpeed = 1.3f;
+    [Tooltip("걷기와 달리기 재생 속도가 바뀔 때 초당 보간 속도입니다.")]
+    [SerializeField, Min(0.1f)] private float animationSpeedChangeRate = 3f;
     [Tooltip("달리기 중 방향 전환 애니메이션을 재생할 최소 회전 각도입니다.")]
     [SerializeField, Min(1f)] private float runTurnAngleThreshold = 12f;
     [Tooltip("달리기 중 좌우 방향 전환 애니메이션을 유지하는 시간입니다.")]
@@ -135,6 +165,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private Transform headBone;
     private Transform neckBone;
+    private float smoothedHeadYaw;
     private Vector3 homePosition;
     private Vector3 wanderTarget;
     private float stateTimeRemaining;
@@ -158,10 +189,52 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private float turnAnimationElapsed;
     private Vector3 turnTargetDirection;
     private Quaternion turnStartRotation;
+    private float releaseSettleTimeRemaining;
+    private bool releaseAnimationActive;
+    private float targetAnimatorSpeed = 1f;
+    private float currentMoveSpeed;
+    private string currentIdleState;
+    private int lastIdleChoice = -1;
+    private IdleSequencePhase idleSequencePhase;
+    private string activeIdleSequenceLoopState;
+    private string activeIdleSequenceEndState;
+    private bool activeIdleSequenceRequiresStandUp;
+    private bool lastIdleWasRestPose;
+    private float restIdleSuppressedUntilTime;
 
     #endregion
 
     #region 생명주기
+
+    public float GetGroundedRootY(float groundHeight)
+    {
+        return groundHeight + groundOffset;
+    }
+
+    public void ResumeAfterGrab(float settleDuration)
+    {
+        ResolveReferences();
+        releaseAnimationActive = !string.IsNullOrEmpty(releaseState);
+        releaseSettleTimeRemaining = releaseAnimationActive
+            ? 0f
+            : Mathf.Max(
+                releaseSettleTimeRemaining,
+                Mathf.Max(0f, settleDuration));
+        turnAnimationActive = false;
+        turnAnimationElapsed = 0f;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        followAnimationModeInitialized = false;
+        currentAnimation = null;
+        ResetActiveIdleSequence();
+        targetAnimatorSpeed = 1f;
+
+        if (animator != null)
+        {
+            animator.speed = 1f;
+            PlayAnimation(releaseAnimationActive ? releaseState : idleBreathingState);
+        }
+    }
 
     private void Awake()
     {
@@ -184,6 +257,39 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         obstacleAvoidanceTimeRemaining = Mathf.Max(0f, obstacleAvoidanceTimeRemaining - Time.deltaTime);
         UpdateTurnAnimationProgress();
         playerInRange = IsPlayerInRange();
+        UpdateAnimatorPlaybackSpeed();
+
+        if (releaseAnimationActive)
+        {
+            turnAnimationActive = false;
+            movementUsesRunAnimation = false;
+            currentMoveSpeed = 0f;
+            if (IsAnimationCycleFinished(releaseState))
+            {
+                releaseAnimationActive = false;
+                restIdleSuppressedUntilTime = Time.time + 2.5f;
+                currentAnimation = null;
+                ResetActiveIdleSequence();
+                UpdateStationaryIdleAnimation();
+            }
+
+            hadPlayerInRange = playerInRange;
+            KeepOnGround();
+            return;
+        }
+
+        if (releaseSettleTimeRemaining > 0f)
+        {
+            releaseSettleTimeRemaining = Mathf.Max(
+                0f,
+                releaseSettleTimeRemaining - Time.deltaTime);
+            turnAnimationActive = false;
+            currentMoveSpeed = 0f;
+            PlayAnimation(idleBreathingState);
+            hadPlayerInRange = playerInRange;
+            KeepOnGround();
+            return;
+        }
 
         if (whistleResponseActive)
         {
@@ -199,6 +305,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         {
             obstacleIdleTimeRemaining -= Time.deltaTime;
             turnAnimationActive = false;
+            currentMoveSpeed = 0f;
             PlayAnimation(idleBreathingState);
             hadPlayerInRange = playerInRange;
             KeepOnGround();
@@ -272,7 +379,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             whistleIdleTimeRemaining -= Time.deltaTime;
             turnAnimationActive = false;
             movementUsesRunAnimation = false;
-            PlayAnimation(idleBreathingState);
+            currentMoveSpeed = 0f;
+            UpdateStationaryIdleAnimation();
             FacePlayerWhileIdle();
 
             if (whistleIdleTimeRemaining <= 0f)
@@ -293,6 +401,14 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (distance <= whistleArrivalDistance)
         {
             StartWhistleArrivalIdle();
+            return;
+        }
+
+        if (FinishRestPoseBeforeMovement())
+        {
+            movementUsesRunAnimation = false;
+            turnAnimationActive = false;
+            currentMoveSpeed = 0f;
             return;
         }
 
@@ -325,7 +441,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         movementUsesRunAnimation = false;
         turnAnimationActive = false;
         whistleIdleTimeRemaining = Random.Range(whistleIdleDurationMin, whistleIdleDurationMax);
-        PlayAnimation(idleBreathingState);
+        ResetActiveIdleSequence();
+        UpdateStationaryIdleAnimation();
         FacePlayerWhileIdle();
     }
 
@@ -392,8 +509,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (playerInRange)
+        if (playerInRange && CanLookAtPlayerWithoutFightingMovement())
             UpdateHeadLook();
+        else
+            smoothedHeadYaw = 0f;
     }
 
     #endregion
@@ -412,10 +531,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             playerTransform = ResolvePlayerTransform();
 
         if (headBone == null)
-            headBone = FindBone("DEF-spine.011");
+            headBone = FindBone("DEF-spine.011") ?? FindBone("head");
 
         if (neckBone == null)
-            neckBone = FindBone("DEF-spine.010");
+            neckBone = FindBone("DEF-spine.010") ?? FindBone("neck");
     }
 
     private Transform ResolvePlayerTransform()
@@ -487,7 +606,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             followAnimationModeInitialized = true;
             movementUsesRunAnimation = false;
             turnAnimationActive = false;
-            PlayAnimation(idleBreathingState);
+            currentMoveSpeed = 0f;
+            UpdateStationaryIdleAnimation();
             return;
         }
 
@@ -498,7 +618,16 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             followAnimationModeInitialized = true;
             movementUsesRunAnimation = false;
             turnAnimationActive = false;
-            PlayAnimation(idleBreathingState);
+            currentMoveSpeed = 0f;
+            UpdateStationaryIdleAnimation();
+            return;
+        }
+
+        if (FinishRestPoseBeforeMovement())
+        {
+            movementUsesRunAnimation = false;
+            turnAnimationActive = false;
+            currentMoveSpeed = 0f;
             return;
         }
 
@@ -555,6 +684,22 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         if (state == BrainState.Idle)
         {
+            if (HasIdleVariations())
+            {
+                if (UpdateIdleVariation())
+                {
+                    if (stateTimeRemaining <= 0f)
+                        EnterAmbientState(false);
+                    else
+                        PlayRandomIdleVariation();
+                }
+
+                movementUsesRunAnimation = false;
+                turnAnimationActive = false;
+                currentMoveSpeed = 0f;
+                return;
+            }
+
             // Idle Playing은 비루프 클립이 끝난 뒤 마지막 프레임에 머물 수 있으므로,
             // 재생이 끝나는 즉시 다음 생활 상태를 선택합니다.
             if (currentAnimation == idlePlayingState && IsCurrentAnimationFinished())
@@ -566,6 +711,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             // Idle Breathing과 Idle Playing은 모두 완전 정지 상태입니다.
             movementUsesRunAnimation = false;
             turnAnimationActive = false;
+            currentMoveSpeed = 0f;
             if (stateTimeRemaining <= 0f)
                 EnterAmbientState(false);
             return;
@@ -592,6 +738,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         movementUsesRunAnimation = false;
         followUsesRunAnimation = false;
         followAnimationModeInitialized = false;
+        ResetActiveIdleSequence();
         float roll = Random.value;
         if (roll < ambientRunChance)
         {
@@ -612,12 +759,19 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             state = BrainState.Idle;
             stateTimeRemaining = Random.Range(idleDurationMin, idleDurationMax);
 
-            // Idle Playing은 플레이어 앞에 가까이 도착했을 때만 후보에 넣고,
-            // 한 번 재생한 직후에는 같은 애니메이션을 연속으로 고르지 않습니다.
-            bool canPlayIdlePlaying = !preventIdlePlaying &&
-                                      IsPlayerFrontIdlePosition() &&
-                                      Random.value >= 0.72f;
-            PlayAnimation(canPlayIdlePlaying ? idlePlayingState : idleBreathingState);
+            if (HasIdleVariations())
+            {
+                PlayRandomIdleVariation();
+            }
+            else
+            {
+                // Idle Playing은 플레이어 앞에 가까이 도착했을 때만 후보에 넣고,
+                // 한 번 재생한 직후에는 같은 애니메이션을 연속으로 고르지 않습니다.
+                bool canPlayIdlePlaying = !preventIdlePlaying &&
+                                          IsPlayerFrontIdlePosition() &&
+                                          Random.value >= 0.72f;
+                PlayAnimation(canPlayIdlePlaying ? idlePlayingState : idleBreathingState);
+            }
         }
 
         if (immediate)
@@ -743,7 +897,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         float movementScale = isEscapingObstacle || whistleResponseActive
             ? 1f
             : Mathf.Clamp01((alignment + 0.2f) / 1.2f);
-        float movementDistance = speed * movementScale * Time.deltaTime;
+        currentMoveSpeed = Mathf.MoveTowards(
+            currentMoveSpeed,
+            speed,
+            locomotionAcceleration * Time.deltaTime);
+        float movementDistance = currentMoveSpeed * movementScale * Time.deltaTime;
         if (movementDistance <= 0.0001f)
             return;
 
@@ -937,13 +1095,41 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         targetDirection.Normalize();
         float signedYaw = Vector3.SignedAngle(transform.forward, targetDirection, Vector3.up);
         float limitedYaw = Mathf.Clamp(signedYaw, -headYawLimit, headYawLimit);
-        Quaternion targetRotation = Quaternion.AngleAxis(limitedYaw, Vector3.up) * transform.rotation;
         float blend = 1f - Mathf.Exp(-headTurnSpeed * Time.deltaTime);
+        smoothedHeadYaw = Mathf.LerpAngle(smoothedHeadYaw, limitedYaw, blend);
 
+        // 뼈의 월드 회전을 목표 회전으로 직접 덮어쓰면 얼굴 정면축이 +Z가 아닌 리그에서
+        // 애니메이터 포즈와 서로 반대 방향으로 보정되어 좌우 플립이 발생합니다.
+        // 현재 애니메이션 포즈에 월드 Y축 회전량만 분배해 더하면 리그 축을 그대로 보존합니다.
+        float neckShare = headBone != null ? 0.35f : 1f;
+        float headShare = neckBone != null ? 0.65f : 1f;
         if (neckBone != null)
-            neckBone.rotation = Quaternion.Slerp(neckBone.rotation, targetRotation, blend * 0.55f);
+            neckBone.rotation = Quaternion.AngleAxis(
+                smoothedHeadYaw * neckShare,
+                Vector3.up) * neckBone.rotation;
         if (headBone != null)
-            headBone.rotation = Quaternion.Slerp(headBone.rotation, targetRotation, blend);
+            headBone.rotation = Quaternion.AngleAxis(
+                smoothedHeadYaw * headShare,
+                Vector3.up) * headBone.rotation;
+    }
+
+    private bool CanLookAtPlayerWithoutFightingMovement()
+    {
+        if (turnAnimationActive || obstacleRepositionActive)
+            return false;
+
+        if (state == BrainState.Walk || state == BrainState.Run)
+            return false;
+
+        if (whistleResponseActive && whistleIdleTimeRemaining <= 0f)
+            return false;
+
+        if (state != BrainState.FollowPlayer)
+            return true;
+
+        Vector3 toPlayer = GetPlayerPosition() - transform.position;
+        toPlayer.y = 0f;
+        return toPlayer.sqrMagnitude <= playerStopDistance * playerStopDistance;
     }
 
     #endregion
@@ -986,14 +1172,387 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (animator == null || string.IsNullOrEmpty(stateName))
             return;
 
-        // 달리기 상태에서만 애니메이션 재생 속도를 높이고, 아이들/걷기 상태로 돌아오면 기본 속도로 복원합니다.
-        animator.speed = IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
+        if (HasIdleVariations() && !IsConfiguredIdleState(stateName))
+            ResetActiveIdleSequence();
+
+        targetAnimatorSpeed = IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
 
         if (currentAnimation == stateName && IsAnimatorInRequestedState(stateName))
             return;
 
-        animator.CrossFadeInFixedTime(stateName, animationBlendTime, 0);
+        bool phaseMatchedLocomotionTransition =
+            IsLocomotionState(currentAnimation) && IsLocomotionState(stateName);
+        if (phaseMatchedLocomotionTransition)
+        {
+            AnimatorStateInfo currentStateInfo = animator.GetCurrentAnimatorStateInfo(0);
+            float normalizedPhase = Mathf.Repeat(currentStateInfo.normalizedTime, 1f);
+            float destinationOffset = normalizedPhase * GetAnimationClipLength(stateName);
+            animator.CrossFadeInFixedTime(
+                stateName,
+                locomotionBlendTime,
+                0,
+                destinationOffset);
+        }
+        else
+        {
+            animator.CrossFadeInFixedTime(stateName, animationBlendTime, 0);
+        }
+
         currentAnimation = stateName;
+    }
+
+    private void UpdateAnimatorPlaybackSpeed()
+    {
+        if (animator == null || !animator.enabled)
+            return;
+
+        animator.speed = Mathf.MoveTowards(
+            animator.speed,
+            targetAnimatorSpeed,
+            animationSpeedChangeRate * Time.deltaTime);
+    }
+
+    private bool IsLocomotionState(string stateName)
+    {
+        if (string.IsNullOrEmpty(stateName))
+            return false;
+
+        return stateName == walkState ||
+               stateName == runState ||
+               stateName == runLeanRightState ||
+               stateName == runLeanLeftState ||
+               stateName == walkTurnRightState ||
+               stateName == walkTurnLeftState;
+    }
+
+    private float GetAnimationClipLength(string stateName)
+    {
+        if (animator == null || animator.runtimeAnimatorController == null)
+            return 1f;
+
+        AnimationClip[] clips = animator.runtimeAnimatorController.animationClips;
+        for (int i = 0; i < clips.Length; i++)
+        {
+            if (clips[i] != null && clips[i].name == stateName)
+                return Mathf.Max(0.01f, clips[i].length);
+        }
+
+        return 1f;
+    }
+
+    private void UpdateStationaryIdleAnimation()
+    {
+        if (!HasIdleVariations())
+        {
+            PlayAnimation(idleBreathingState);
+            return;
+        }
+
+        if (UpdateIdleVariation())
+            PlayRandomIdleVariation();
+    }
+
+    private bool IsConfiguredIdleState(string stateName)
+    {
+        if (string.IsNullOrEmpty(stateName))
+            return false;
+
+        if (stateName == idleSequenceStartState ||
+            stateName == idleSequenceLoopState ||
+            stateName == idleSequenceEndState ||
+            stateName == sittingStartState ||
+            stateName == sittingEndState ||
+            stateName == lyingStartState ||
+            stateName == lyingEndState ||
+            IsStateInArray(stateName, sittingLoopStates) ||
+            IsStateInArray(stateName, lyingLoopStates))
+            return true;
+
+        if (idleStates == null)
+            return false;
+
+        for (int i = 0; i < idleStates.Length; i++)
+        {
+            if (stateName == idleStates[i])
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool HasIdleVariations()
+    {
+        return GetValidIdleStateCount() > 0 ||
+               HasIdleSequence() ||
+               HasRestIdleSequence();
+    }
+
+    private bool HasIdleSequence()
+    {
+        return !string.IsNullOrEmpty(idleSequenceStartState) &&
+               !string.IsNullOrEmpty(idleSequenceLoopState) &&
+               !string.IsNullOrEmpty(idleSequenceEndState);
+    }
+
+    private int GetValidIdleStateCount()
+    {
+        if (idleStates == null)
+            return 0;
+
+        int count = 0;
+        for (int i = 0; i < idleStates.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(idleStates[i]))
+                count++;
+        }
+
+        return count;
+    }
+
+    private bool HasRestIdleSequence()
+    {
+        return HasCompleteIdleSequence(
+                   sittingStartState,
+                   sittingLoopStates,
+                   sittingEndState) ||
+               HasCompleteIdleSequence(
+                   lyingStartState,
+                   lyingLoopStates,
+                   lyingEndState);
+    }
+
+    private static bool HasCompleteIdleSequence(
+        string startState,
+        string[] loopStates,
+        string endState)
+    {
+        return !string.IsNullOrEmpty(startState) &&
+               !string.IsNullOrEmpty(endState) &&
+               GetValidStateCount(loopStates) > 0;
+    }
+
+    private static int GetValidStateCount(string[] states)
+    {
+        if (states == null)
+            return 0;
+
+        int count = 0;
+        for (int i = 0; i < states.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(states[i]))
+                count++;
+        }
+
+        return count;
+    }
+
+    private static bool IsStateInArray(string stateName, string[] states)
+    {
+        if (states == null)
+            return false;
+
+        for (int i = 0; i < states.Length; i++)
+        {
+            if (stateName == states[i])
+                return true;
+        }
+
+        return false;
+    }
+
+    private void PlayRandomIdleVariation()
+    {
+        if (TryPlayRestIdleSequence())
+            return;
+
+        int regularCount = GetValidIdleStateCount();
+        int choiceCount = regularCount + (HasIdleSequence() ? 1 : 0);
+        if (choiceCount <= 0)
+        {
+            PlayAnimation(idleBreathingState);
+            return;
+        }
+
+        int choice = Random.Range(0, choiceCount);
+        if (choiceCount > 1 && choice == lastIdleChoice)
+            choice = (choice + Random.Range(1, choiceCount)) % choiceCount;
+        lastIdleChoice = choice;
+
+        if (choice >= regularCount)
+        {
+            lastIdleWasRestPose = false;
+            BeginIdleSequence(
+                idleSequenceStartState,
+                new[] { idleSequenceLoopState },
+                idleSequenceEndState,
+                false);
+            return;
+        }
+
+        int validIndex = 0;
+        for (int i = 0; i < idleStates.Length; i++)
+        {
+            if (string.IsNullOrEmpty(idleStates[i]))
+                continue;
+            if (validIndex++ != choice)
+                continue;
+
+            idleSequencePhase = IdleSequencePhase.None;
+            activeIdleSequenceLoopState = null;
+            activeIdleSequenceEndState = null;
+            activeIdleSequenceRequiresStandUp = false;
+            lastIdleWasRestPose = false;
+            currentIdleState = idleStates[i];
+            PlayAnimation(currentIdleState);
+            return;
+        }
+    }
+
+    private bool TryPlayRestIdleSequence()
+    {
+        if (!HasRestIdleSequence() || lastIdleWasRestPose ||
+            Time.time < restIdleSuppressedUntilTime ||
+            Random.value >= restIdleChance)
+            return false;
+
+        bool hasSitting = HasCompleteIdleSequence(
+            sittingStartState,
+            sittingLoopStates,
+            sittingEndState);
+        bool hasLying = HasCompleteIdleSequence(
+            lyingStartState,
+            lyingLoopStates,
+            lyingEndState);
+        bool chooseSitting = hasSitting && (!hasLying || Random.value < 0.5f);
+
+        if (chooseSitting)
+        {
+            BeginIdleSequence(
+                sittingStartState,
+                sittingLoopStates,
+                sittingEndState,
+                true);
+        }
+        else
+        {
+            BeginIdleSequence(
+                lyingStartState,
+                lyingLoopStates,
+                lyingEndState,
+                true);
+        }
+
+        lastIdleWasRestPose = true;
+        lastIdleChoice = -1;
+        return true;
+    }
+
+    private void BeginIdleSequence(
+        string startState,
+        string[] loopStates,
+        string endState,
+        bool requiresStandUp)
+    {
+        int validLoopCount = GetValidStateCount(loopStates);
+        int loopChoice = validLoopCount > 0 ? Random.Range(0, validLoopCount) : -1;
+        int validIndex = 0;
+        activeIdleSequenceLoopState = null;
+
+        if (loopStates != null)
+        {
+            for (int i = 0; i < loopStates.Length; i++)
+            {
+                if (string.IsNullOrEmpty(loopStates[i]))
+                    continue;
+                if (validIndex++ == loopChoice)
+                {
+                    activeIdleSequenceLoopState = loopStates[i];
+                    break;
+                }
+            }
+        }
+
+        activeIdleSequenceEndState = endState;
+        activeIdleSequenceRequiresStandUp = requiresStandUp;
+        idleSequencePhase = IdleSequencePhase.Start;
+        currentIdleState = startState;
+        PlayAnimation(currentIdleState);
+    }
+
+    private bool UpdateIdleVariation()
+    {
+        if (string.IsNullOrEmpty(currentIdleState))
+        {
+            PlayRandomIdleVariation();
+            return false;
+        }
+
+        if (!IsAnimationCycleFinished(currentIdleState))
+            return false;
+
+        if (idleSequencePhase == IdleSequencePhase.Start)
+        {
+            idleSequencePhase = IdleSequencePhase.Loop;
+            currentIdleState = activeIdleSequenceLoopState;
+            PlayAnimation(currentIdleState);
+            return false;
+        }
+
+        if (idleSequencePhase == IdleSequencePhase.Loop)
+        {
+            idleSequencePhase = IdleSequencePhase.End;
+            currentIdleState = activeIdleSequenceEndState;
+            PlayAnimation(currentIdleState);
+            return false;
+        }
+
+        ResetActiveIdleSequence();
+        return true;
+    }
+
+    private void ResetActiveIdleSequence()
+    {
+        idleSequencePhase = IdleSequencePhase.None;
+        currentIdleState = null;
+        activeIdleSequenceLoopState = null;
+        activeIdleSequenceEndState = null;
+        activeIdleSequenceRequiresStandUp = false;
+    }
+
+    private bool FinishRestPoseBeforeMovement()
+    {
+        if (!activeIdleSequenceRequiresStandUp ||
+            idleSequencePhase == IdleSequencePhase.None)
+            return false;
+
+        if (!IsAnimationCycleFinished(currentIdleState))
+            return true;
+
+        if (idleSequencePhase == IdleSequencePhase.Start ||
+            idleSequencePhase == IdleSequencePhase.Loop)
+        {
+            idleSequencePhase = IdleSequencePhase.End;
+            currentIdleState = activeIdleSequenceEndState;
+            PlayAnimation(currentIdleState);
+            return true;
+        }
+
+        ResetActiveIdleSequence();
+        currentAnimation = null;
+        return false;
+    }
+
+    private bool IsAnimationCycleFinished(string stateName)
+    {
+        if (animator == null || string.IsNullOrEmpty(stateName) || animator.IsInTransition(0))
+            return false;
+
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+        int stateHash = Animator.StringToHash(stateName);
+        if (!stateInfo.IsName(stateName) && stateInfo.shortNameHash != stateHash)
+            return false;
+
+        return stateInfo.normalizedTime >= 0.98f;
     }
 
     private bool IsAnimatorInRequestedState(string stateName)
