@@ -24,10 +24,23 @@ public sealed class PcKeyboardLocomotion : MonoBehaviour
     public Vector3 roomCenter = Vector3.zero;
     [Min(0.5f)] public float roomHalfExtent = 3.55f;
 
+    [Header("Crouch")]
+    [Tooltip("C 또는 왼쪽/오른쪽 Ctrl을 누를 때 앉기 상태를 전환합니다.")]
+    public bool enableCrouch = true;
+    [Min(0.1f)] public float crouchViewDrop = 0.65f;
+    [Min(0.1f)] public float crouchTransitionSpeed = 5f;
+    [Min(0.5f)] public float crouchedControllerHeight = 1.05f;
+
     private CharacterController characterController;
     private Transform headTransform;
     private Transform cameraOffsetTransform;
     private float cameraPitch;
+    private bool isCrouching;
+    private float standingCameraOffsetY;
+    private float standingControllerHeight;
+    private Vector3 standingControllerCenter;
+
+    public bool IsCrouching => isCrouching;
 
     private void Awake()
     {
@@ -37,6 +50,14 @@ public sealed class PcKeyboardLocomotion : MonoBehaviour
         cameraPitch = cameraOffsetTransform != null
             ? NormalizeAngle(cameraOffsetTransform.localEulerAngles.x)
             : 0f;
+        standingCameraOffsetY = cameraOffsetTransform != null
+            ? cameraOffsetTransform.localPosition.y
+            : 0f;
+        if (characterController != null)
+        {
+            standingControllerHeight = characterController.height;
+            standingControllerCenter = characterController.center;
+        }
     }
 
     private void Start()
@@ -50,6 +71,8 @@ public sealed class PcKeyboardLocomotion : MonoBehaviour
     private void Update()
     {
         UpdateMouseLook();
+        UpdateCrouchInput();
+        UpdateCrouchPose();
 
         if (Keyboard.current == null)
         {
@@ -97,6 +120,55 @@ public sealed class PcKeyboardLocomotion : MonoBehaviour
         }
 
         ClampToPrototypeRoom();
+    }
+
+    private void UpdateCrouchInput()
+    {
+        if (!enableCrouch || Keyboard.current == null)
+            return;
+
+        bool togglePressed = Keyboard.current.cKey.wasPressedThisFrame ||
+                             Keyboard.current.leftCtrlKey.wasPressedThisFrame ||
+                             Keyboard.current.rightCtrlKey.wasPressedThisFrame;
+        if (togglePressed)
+            isCrouching = !isCrouching;
+    }
+
+    private void UpdateCrouchPose()
+    {
+        if (cameraOffsetTransform == null)
+        {
+            cameraOffsetTransform = FindCameraOffsetTransform();
+            if (cameraOffsetTransform == null)
+                return;
+        }
+
+        float targetOffsetY = standingCameraOffsetY - (isCrouching ? crouchViewDrop : 0f);
+        Vector3 offsetPosition = cameraOffsetTransform.localPosition;
+        offsetPosition.y = Mathf.MoveTowards(
+            offsetPosition.y,
+            targetOffsetY,
+            crouchTransitionSpeed * Time.deltaTime);
+        cameraOffsetTransform.localPosition = offsetPosition;
+
+        if (characterController == null)
+            return;
+
+        float targetHeight = isCrouching
+            ? Mathf.Min(standingControllerHeight, crouchedControllerHeight)
+            : standingControllerHeight;
+        float previousHeight = characterController.height;
+        characterController.height = Mathf.MoveTowards(
+            previousHeight,
+            targetHeight,
+            crouchTransitionSpeed * Time.deltaTime);
+
+        Vector3 targetCenter = standingControllerCenter;
+        targetCenter.y -= (standingControllerHeight - characterController.height) * 0.5f;
+        characterController.center = Vector3.MoveTowards(
+            characterController.center,
+            targetCenter,
+            crouchTransitionSpeed * Time.deltaTime);
     }
 
     private void UpdateMouseLook()

@@ -13,6 +13,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         Idle,
         Walk,
+        Trot,
         Run,
         FollowPlayer
     }
@@ -23,6 +24,35 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         Start,
         Loop,
         End
+    }
+
+    private enum ScheduledRoutinePhase
+    {
+        None,
+        MovingToFood,
+        AligningToFood,
+        Eating,
+        FinishingMeal,
+        MovingToSleep,
+        AligningToSleep,
+        EnteringBed,
+        LyingDown,
+        FallingAsleep,
+        Sleeping,
+        WakingUp,
+        StandingUp,
+        LeavingBed
+    }
+
+    private enum FetchPhase
+    {
+        None,
+        ApproachingHeldBall,
+        WatchingHeldBall,
+        ChasingBall,
+        PickingUpBall,
+        ReturningBall,
+        DroppingBall
     }
 
     #endregion
@@ -40,6 +70,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Min(0f)] private float runWalkHysteresis = 0.35f;
     [Tooltip("몸통은 움직이지 않고 고개만 좌우로 돌릴 수 있는 최대 각도입니다.")]
     [SerializeField, Min(1f)] private float headYawLimit = 42f;
+    [Tooltip("공이나 플레이어를 바라볼 때 고개를 위아래로 들 수 있는 최대 각도입니다.")]
+    [SerializeField, Range(5f, 55f)] private float headPitchLimit = 38f;
     [Tooltip("고개가 목표를 향해 돌아가는 속도입니다. 값이 클수록 빠르게 바라봅니다.")]
     [SerializeField, Min(0f)] private float headTurnSpeed = 7f;
     [Tooltip("비워 두면 씬에서 플레이어를 자동으로 찾습니다.")]
@@ -59,7 +91,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [Tooltip("셰퍼드가 걷는 속도입니다.")]
     [SerializeField, Min(0.05f)] private float walkSpeed = 0.9f;
     [Tooltip("셰퍼드가 달리는 속도입니다.")]
-    [SerializeField, Min(0.05f)] private float runSpeed = 1.35f;
+    [SerializeField, Min(0.05f)] private float runSpeed = 2.25f;
+    [Tooltip("걷기와 달리기 사이의 중간 이동 속도입니다.")]
+    [SerializeField, Min(0.05f)] private float trotSpeed = 1.45f;
+    [Tooltip("플레이어가 이 거리보다 멀어지면 걷기 대신 트롯을 사용합니다.")]
+    [SerializeField, Min(0f)] private float playerTrotDistance = 2.2f;
     [Tooltip("정지/걷기/달리기 속도가 바뀔 때 초당 가감속량입니다.")]
     [SerializeField, Min(0.1f)] private float locomotionAcceleration = 4f;
     [Tooltip("몸통이 이동 방향으로 회전하는 속도입니다.")]
@@ -103,6 +139,58 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [Tooltip("플레이어를 인식하지 못할 때 달리기를 선택할 확률입니다.")]
     [SerializeField, Range(0f, 1f)] private float ambientRunChance = 0.16f;
 
+    [Header("수동 식사와 수면")]
+    [Tooltip("비워 두면 씬의 Bowl_1 오브젝트를 자동으로 찾습니다.")]
+    [SerializeField] private Transform foodBowl;
+    [Tooltip("비워 두면 씬의 CT_Dog_bed 오브젝트를 자동으로 찾습니다.")]
+    [SerializeField] private Transform sleepSpot;
+    [Tooltip("식사를 요청하는 키입니다.")]
+    [SerializeField] private Key eatKey = Key.E;
+    [SerializeField, Min(0.1f)] private float eatingDuration = 10f;
+    [Tooltip("식사 자세에서 강아지 루트와 밥그릇 중앙 사이의 거리입니다.")]
+    [SerializeField, Min(0.1f)] private float foodStoppingDistance = 0.4f;
+    [Tooltip("수면을 요청하는 키입니다.")]
+    [SerializeField] private Key sleepKey = Key.R;
+    [SerializeField, Min(0.1f)] private float sleepingDuration = 30f;
+    [Tooltip("침대 앞쪽 입구에서 바깥으로 떨어지는 거리입니다.")]
+    [SerializeField, Min(0f)] private float bedEntranceClearance = 0.08f;
+    [Tooltip("침대 뒤쪽에서 입구로 이동할 때 옆 벽을 피하는 여유 거리입니다.")]
+    [SerializeField, Min(0.05f)] private float bedRouteClearance = 0.85f;
+    [Tooltip("침대 렌더러의 아래쪽에서 위쪽 사이 중 매트리스 표면으로 사용할 높이 비율입니다.")]
+    [SerializeField, Range(0f, 1f)] private float sleepSurfaceHeightRatio = 0.43f;
+    [Tooltip("침대 기준 수면 위치를 미세 조정할 로컬 오프셋입니다.")]
+    [SerializeField] private Vector3 sleepPoseLocalOffset = Vector3.zero;
+    [Tooltip("앞쪽 입구에서 중앙 수면 위치까지 올라가는 시간입니다.")]
+    [SerializeField, Min(0.1f)] private float bedEntryDuration = 0.65f;
+    [Tooltip("잠에서 깬 뒤 침대 밖으로 내려오는 시간입니다.")]
+    [SerializeField, Min(0.1f)] private float bedExitDuration = 0.65f;
+    [SerializeField] private string eatLoopState = "Arm_Shiba|Eat_loop";
+    [SerializeField] private string eatEndState = "Arm_Shiba|EatDrink_end";
+    [SerializeField] private string sleepStartState = "Arm_Shiba|Lie_belly_sleep_start";
+    [SerializeField] private string sleepLoopState = "Arm_Shiba|Lie_belly_sleep";
+    [SerializeField] private string sleepEndState = "Arm_Shiba|Lie_belly_sleep_end";
+
+    [Header("공놀이")]
+    [Tooltip("플레이어가 공을 든 동안 이 거리까지 다가온 뒤 공을 바라봅니다.")]
+    [SerializeField, Min(0.5f)] private float heldBallWaitDistance = 1.45f;
+    [Tooltip("던진 공에 이 거리까지 접근하면 공을 뭅니다.")]
+    [SerializeField, Min(0.1f)] private float ballPickupDistance = 0.42f;
+    [Tooltip("공이 벽이나 구석에 있을 때 강아지가 설 수 있는 안쪽 접근점 거리입니다.")]
+    [SerializeField, Min(0.25f)] private float cornerBallApproachDistance = 0.52f;
+    [Tooltip("구석 공을 입으로 가져올 수 있는 최대 거리입니다.")]
+    [SerializeField, Min(0.3f)] private float cornerBallPickupReach = 0.78f;
+    [Tooltip("공을 물고 돌아온 뒤 플레이어에게서 이 거리에서 멈춥니다.")]
+    [SerializeField, Min(0.5f)] private float ballReturnDistance = 1.25f;
+    [Tooltip("공을 무는 동작과 내려놓는 동작에 사용하는 짧은 대기 시간입니다.")]
+    [SerializeField, Min(0.1f)] private float ballBiteDuration = 1.05f;
+    [SerializeField, Range(0.05f, 0.95f)] private float ballBiteAttachRatio = 0.48f;
+    [SerializeField, Min(0.1f)] private float ballDropDuration = 1.05f;
+    [SerializeField, Range(0.05f, 0.95f)] private float ballDropReleaseRatio = 0.42f;
+    [SerializeField] private string ballBiteState = "Arm_Shiba|Attack_Bite_IP";
+    [SerializeField] private string ballDropState = "Arm_Shiba|EatDrink_end";
+    [Tooltip("입에 문 공의 머리뼈 기준 앞/위치 보정입니다.")]
+    [SerializeField] private Vector3 ballMouthOffset = new Vector3(0f, -0.045f, 0.13f);
+
     [Header("애니메이션")]
     [Tooltip("비워 두면 자식 오브젝트에서 Animator를 자동으로 찾습니다.")]
     [SerializeField] private Animator animator;
@@ -130,6 +218,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private string walkState = "1 type_Walk_Loop";
     [Tooltip("달리기 애니메이터 상태 이름입니다.")]
     [SerializeField] private string runState = "1 type_Run Loop";
+    [Tooltip("걷기와 달리기 사이의 트롯 애니메이터 상태 이름입니다.")]
+    [SerializeField] private string trotState = "Arm_Shiba|Trot_F_IP";
     [Tooltip("달리면서 오른쪽으로 방향을 바꿀 때 재생할 애니메이터 상태 이름입니다.")]
     [SerializeField] private string runLeanRightState = "1 type_Run Lean Right";
     [Tooltip("달리면서 왼쪽으로 방향을 바꿀 때 재생할 애니메이터 상태 이름입니다.")]
@@ -138,12 +228,19 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private string walkTurnRightState = "1 type_Walk_Turn_Right";
     [Tooltip("걸으면서 왼쪽으로 방향을 바꿀 때 재생할 애니메이터 상태 이름입니다.")]
     [SerializeField] private string walkTurnLeftState = "1 type_Walk_Turn_Left";
+    [Tooltip("큰 방향 전환에 사용할 왼쪽 180도 회전 상태입니다.")]
+    [SerializeField] private string turnLeft180State = "Arm_Shiba|Turn_L180_IP";
+    [Tooltip("큰 방향 전환에 사용할 오른쪽 180도 회전 상태입니다.")]
+    [SerializeField] private string turnRight180State = "Arm_Shiba|Turn_R180_IP";
+    [SerializeField, Range(60f, 170f)] private float turn180AngleThreshold = 105f;
+    [SerializeField, Min(0.1f)] private float turn180AnimationDuration = 1f;
     [Tooltip("애니메이션 상태가 바뀔 때 섞이는 시간입니다. 너무 짧으면 끊겨 보일 수 있습니다.")]
     [SerializeField, Min(0.01f)] private float animationBlendTime = 0.2f;
     [Tooltip("걷기와 달리기 사이에서 발 디딤 위상을 유지하며 섞는 시간입니다.")]
     [SerializeField, Min(0.05f)] private float locomotionBlendTime = 0.28f;
     [Tooltip("달리기 애니메이션의 재생 속도입니다. 캐릭터의 실제 이동 속도와 별개로, 다리 움직임이 느려 보일 때 올려주세요.")]
-    [SerializeField, Min(0.1f)] private float runAnimationSpeed = 1.3f;
+    [SerializeField, Min(0.1f)] private float runAnimationSpeed = 1.55f;
+    [SerializeField, Min(0.1f)] private float trotAnimationSpeed = 1.35f;
     [Tooltip("걷기와 달리기 재생 속도가 바뀔 때 초당 보간 속도입니다.")]
     [SerializeField, Min(0.1f)] private float animationSpeedChangeRate = 3f;
     [Tooltip("달리기 중 방향 전환 애니메이션을 재생할 최소 회전 각도입니다.")]
@@ -166,6 +263,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private Transform headBone;
     private Transform neckBone;
     private float smoothedHeadYaw;
+    private float smoothedHeadPitch;
     private Vector3 homePosition;
     private Vector3 wanderTarget;
     private float stateTimeRemaining;
@@ -183,12 +281,15 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private float whistleIdleTimeRemaining;
     private bool movementUsesRunAnimation;
     private bool followUsesRunAnimation;
+    private bool followUsesTrotAnimation;
     private bool followAnimationModeInitialized;
     private bool turnAnimationActive;
     private bool turnAnimationUsesRun;
+    private bool turnAnimationUses180;
     private float turnAnimationElapsed;
     private Vector3 turnTargetDirection;
     private Quaternion turnStartRotation;
+    private string turnAnimationResumeState;
     private float releaseSettleTimeRemaining;
     private bool releaseAnimationActive;
     private float targetAnimatorSpeed = 1f;
@@ -201,6 +302,31 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private bool activeIdleSequenceRequiresStandUp;
     private bool lastIdleWasRestPose;
     private float restIdleSuppressedUntilTime;
+    private ScheduledRoutinePhase scheduledRoutinePhase;
+    private Vector3 scheduledRoutineTarget;
+    private Vector3 mealPosePosition;
+    private Vector3 mealBedEntrancePosition;
+    private Vector3 mealBedCornerPosition;
+    private Vector3 sleepPosePosition;
+    private Vector3 bedEntrancePosition;
+    private Vector3 bedFrontCornerWaypoint;
+    private Vector3 bedTransitionStartPosition;
+    private Quaternion sleepPoseRotation;
+    private Quaternion bedTransitionStartRotation;
+    private Quaternion bedExitRotation;
+    private float scheduledRoutineElapsed;
+    private int mealApproachStage = -1;
+    private int bedApproachStage = -1;
+    private bool mealRequested;
+    private bool sleepRequested;
+    private bool routineInterruptedByGrab;
+    private FetchPhase fetchPhase;
+    private FetchBallInteraction fetchBall;
+    private float fetchActionElapsed;
+    private bool fetchBallAttachedDuringAction;
+    private bool fetchBallReleasedDuringAction;
+    private Vector3 fetchApproachTarget;
+    private bool fetchUsesCornerApproach;
 
     #endregion
 
@@ -211,13 +337,100 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         return groundHeight + groundOffset;
     }
 
+    public Vector3 GetBallCarryPoint()
+    {
+        ResolveReferences();
+        Vector3 anchorPosition = headBone != null
+            ? headBone.position
+            : transform.position + Vector3.up * 0.45f + transform.forward * 0.45f;
+        Vector3 muzzleDirection = transform.forward;
+        if (headBone != null && neckBone != null)
+        {
+            Vector3 anatomicalForward = headBone.position - neckBone.position;
+            if (anatomicalForward.sqrMagnitude > 0.0001f &&
+                Vector3.Dot(anatomicalForward.normalized, transform.forward) > 0.2f)
+            {
+                muzzleDirection = Vector3.Slerp(
+                    transform.forward,
+                    anatomicalForward.normalized,
+                    0.55f).normalized;
+            }
+        }
+
+        return anchorPosition +
+               transform.right * ballMouthOffset.x +
+               Vector3.up * ballMouthOffset.y +
+               muzzleDirection * ballMouthOffset.z;
+    }
+
+    public Quaternion GetBallCarryRotation()
+    {
+        return Quaternion.LookRotation(transform.right, Vector3.up);
+    }
+
+    public void BeginWatchingHeldBall(FetchBallInteraction ball)
+    {
+        if (ball == null)
+            return;
+
+        BeginBallPlay(ball, FetchPhase.ApproachingHeldBall);
+    }
+
+    public void BeginChasingThrownBall(FetchBallInteraction ball)
+    {
+        if (ball == null)
+            return;
+
+        BeginBallPlay(ball, FetchPhase.ChasingBall);
+    }
+
+    public bool WillPlayPostGrabCompletionAnimation()
+    {
+        bool interruptedMeal =
+            scheduledRoutinePhase == ScheduledRoutinePhase.Eating ||
+            scheduledRoutinePhase == ScheduledRoutinePhase.FinishingMeal;
+        bool interruptedSleep =
+            scheduledRoutinePhase >= ScheduledRoutinePhase.LyingDown &&
+            scheduledRoutinePhase <= ScheduledRoutinePhase.StandingUp;
+        if (interruptedMeal || interruptedSleep)
+            return true;
+
+        // 새 식사나 수면 예약을 바로 이어갈 때는 Put Down을 재생하지 않습니다.
+        return !sleepRequested &&
+               !mealRequested &&
+               !string.IsNullOrEmpty(releaseState);
+    }
+
     public void ResumeAfterGrab(float settleDuration)
     {
         ResolveReferences();
-        releaseAnimationActive = !string.IsNullOrEmpty(releaseState);
+        bool interruptedMeal =
+            scheduledRoutinePhase == ScheduledRoutinePhase.Eating ||
+            scheduledRoutinePhase == ScheduledRoutinePhase.FinishingMeal;
+        bool interruptedSleep =
+            scheduledRoutinePhase >= ScheduledRoutinePhase.LyingDown &&
+            scheduledRoutinePhase <= ScheduledRoutinePhase.StandingUp;
+
+        scheduledRoutinePhase = ScheduledRoutinePhase.None;
+        scheduledRoutineElapsed = 0f;
+        routineInterruptedByGrab = interruptedMeal || interruptedSleep;
+        if (routineInterruptedByGrab)
+        {
+            // 들기 전에 진행하던 예약을 다시 시작하지 않습니다. 내려놓은 자리에서
+            // 해당 행동의 마무리 애니메이션만 재생한 뒤 평상시 Idle로 돌아갑니다.
+            mealRequested = false;
+            sleepRequested = false;
+        }
+
+        bool urgentRoutinePending = sleepRequested || mealRequested;
+        releaseAnimationActive = !routineInterruptedByGrab &&
+                                 !urgentRoutinePending &&
+                                 !string.IsNullOrEmpty(releaseState);
         releaseSettleTimeRemaining = releaseAnimationActive
             ? 0f
-            : Mathf.Max(
+            : urgentRoutinePending
+                ? 0f
+                : Mathf.Max(
                 releaseSettleTimeRemaining,
                 Mathf.Max(0f, settleDuration));
         turnAnimationActive = false;
@@ -225,6 +438,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         movementUsesRunAnimation = false;
         currentMoveSpeed = 0f;
         followAnimationModeInitialized = false;
+        followUsesRunAnimation = false;
+        followUsesTrotAnimation = false;
         currentAnimation = null;
         ResetActiveIdleSequence();
         targetAnimatorSpeed = 1f;
@@ -232,7 +447,20 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (animator != null)
         {
             animator.speed = 1f;
-            PlayAnimation(releaseAnimationActive ? releaseState : idleBreathingState);
+            if (interruptedMeal)
+            {
+                scheduledRoutinePhase = ScheduledRoutinePhase.FinishingMeal;
+                PlayAnimation(eatEndState);
+            }
+            else if (interruptedSleep)
+            {
+                scheduledRoutinePhase = ScheduledRoutinePhase.WakingUp;
+                PlayAnimation(sleepEndState);
+            }
+            else
+            {
+                PlayAnimation(releaseAnimationActive ? releaseState : idleBreathingState);
+            }
         }
     }
 
@@ -250,14 +478,31 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private void Update()
     {
         ResolveReferences();
+        ProcessRoutineHotkeys();
         // 프로젝트의 활성 입력 방식인 새 Input System으로 휘파람 입력을 읽습니다.
-        if (Keyboard.current != null && Keyboard.current.qKey.wasPressedThisFrame)
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.None &&
+            !sleepRequested && !mealRequested &&
+            Keyboard.current != null && Keyboard.current.qKey.wasPressedThisFrame)
             StartWhistleResponse();
 
         obstacleAvoidanceTimeRemaining = Mathf.Max(0f, obstacleAvoidanceTimeRemaining - Time.deltaTime);
         UpdateTurnAnimationProgress();
         playerInRange = IsPlayerInRange();
         UpdateAnimatorPlaybackSpeed();
+
+        if (UpdateBallPlay())
+        {
+            hadPlayerInRange = playerInRange;
+            KeepOnGround();
+            return;
+        }
+
+        if (UpdateScheduledRoutine())
+        {
+            hadPlayerInRange = playerInRange;
+            KeepOnGround();
+            return;
+        }
 
         if (releaseAnimationActive)
         {
@@ -345,12 +590,15 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return;
 
         turnAnimationElapsed += Time.deltaTime;
-        float duration = turnAnimationUsesRun ? runTurnAnimationDuration : walkTurnAnimationDuration;
+        float duration = GetCurrentTurnAnimationDuration();
         if (turnAnimationElapsed < duration)
             return;
 
         turnAnimationActive = false;
-        PlayAnimation(turnAnimationUsesRun ? runState : walkState);
+        turnAnimationUses180 = false;
+        PlayAnimation(string.IsNullOrEmpty(turnAnimationResumeState)
+            ? GetCurrentLocomotionState()
+            : turnAnimationResumeState);
     }
 
     private void UpdateWhistleResponse()
@@ -509,10 +757,19 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (playerInRange && CanLookAtPlayerWithoutFightingMovement())
+        if (fetchPhase != FetchPhase.None &&
+            fetchBall != null &&
+            (fetchPhase == FetchPhase.WatchingHeldBall ||
+             fetchPhase == FetchPhase.PickingUpBall ||
+             fetchPhase == FetchPhase.DroppingBall))
+            UpdateHeadLookAt(fetchBall.WorldPosition);
+        else if (playerInRange && CanLookAtPlayerWithoutFightingMovement())
             UpdateHeadLook();
         else
+        {
             smoothedHeadYaw = 0f;
+            smoothedHeadPitch = 0f;
+        }
     }
 
     #endregion
@@ -535,6 +792,20 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         if (neckBone == null)
             neckBone = FindBone("DEF-spine.010") ?? FindBone("neck");
+
+        if (foodBowl == null)
+        {
+            GameObject bowlObject = GameObject.Find("Bowl_1");
+            if (bowlObject != null)
+                foodBowl = bowlObject.transform;
+        }
+
+        if (sleepSpot == null)
+        {
+            GameObject bedObject = GameObject.Find("CT_Dog_bed");
+            if (bedObject != null)
+                sleepSpot = bedObject.transform;
+        }
     }
 
     private Transform ResolvePlayerTransform()
@@ -574,6 +845,1099 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     #endregion
 
+    #region 예약된 식사와 수면
+
+    public void ProcessRoutineHotkeys()
+    {
+        if (Keyboard.current == null)
+            return;
+
+        if (Keyboard.current[eatKey].wasPressedThisFrame)
+            RequestMeal();
+
+        if (Keyboard.current[sleepKey].wasPressedThisFrame)
+            RequestSleep();
+    }
+
+    public void RequestMeal()
+    {
+        mealRequested = true;
+    }
+
+    public void RequestSleep()
+    {
+        sleepRequested = true;
+    }
+
+    private bool UpdateScheduledRoutine()
+    {
+        bool sleepRoutineActive = IsSleepRoutineActive();
+        if (sleepRequested && !sleepRoutineActive)
+            StartSleepRoutine();
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.None)
+        {
+            if (sleepRequested)
+                StartSleepRoutine();
+            else if (mealRequested)
+                StartMealRoutine();
+        }
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.None)
+            return false;
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.MovingToFood ||
+            scheduledRoutinePhase == ScheduledRoutinePhase.MovingToSleep)
+        {
+            UpdateScheduledRoutineMovement();
+            return true;
+        }
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.AligningToFood)
+        {
+            if (UpdateScheduledRoutineAlignment(foodBowl))
+                BeginEating();
+            return true;
+        }
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.AligningToSleep)
+        {
+            if (UpdateScheduledRoutineAlignment(sleepSpot))
+                BeginEnteringBed();
+            return true;
+        }
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.EnteringBed)
+        {
+            UpdateBedEntry();
+            return true;
+        }
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.LeavingBed)
+        {
+            UpdateBedExit();
+            return true;
+        }
+
+        UpdateScheduledRoutineAnimation();
+        return true;
+    }
+
+    private bool IsSleepRoutineActive()
+    {
+        return scheduledRoutinePhase >= ScheduledRoutinePhase.MovingToSleep;
+    }
+
+    private void StartMealRoutine()
+    {
+        ResolveReferences();
+        if (foodBowl == null)
+            return;
+
+        CancelLowerPriorityActions();
+        scheduledRoutinePhase = ScheduledRoutinePhase.MovingToFood;
+        scheduledRoutineElapsed = 0f;
+        bedApproachStage = -1;
+        // 모델 자세에 따라 달라지는 렌더러 경계를 사용하지 않고, 사진에서 확인한
+        // 고정 거리로 접근해야 매번 코가 음식 위의 같은 위치에 놓입니다.
+        float mealPoseDistance = Mathf.Clamp(foodStoppingDistance, 0.1f, 0.4f);
+        CreateMealRoutinePositions(mealPoseDistance, out scheduledRoutineTarget);
+        wanderTarget = scheduledRoutineTarget;
+        currentAnimation = null;
+    }
+
+    private void StartSleepRoutine()
+    {
+        ResolveReferences();
+        if (sleepSpot == null)
+            return;
+
+        CancelLowerPriorityActions();
+        scheduledRoutinePhase = ScheduledRoutinePhase.MovingToSleep;
+        scheduledRoutineElapsed = 0f;
+        mealApproachStage = -1;
+        CreateBedRoutinePositions(
+            out scheduledRoutineTarget,
+            out sleepPosePosition,
+            out sleepPoseRotation);
+        wanderTarget = scheduledRoutineTarget;
+        currentAnimation = null;
+    }
+
+    private void CancelLowerPriorityActions()
+    {
+        whistleResponseActive = false;
+        whistleIdleTimeRemaining = 0f;
+        releaseAnimationActive = false;
+        releaseSettleTimeRemaining = 0f;
+        obstacleIdleTimeRemaining = 0f;
+        obstacleRepositionActive = false;
+        obstacleAvoidanceTimeRemaining = 0f;
+        obstacleAvoidanceDirection = Vector3.zero;
+        turnAnimationActive = false;
+        turnAnimationUses180 = false;
+        turnAnimationElapsed = 0f;
+        movementUsesRunAnimation = false;
+        followUsesRunAnimation = false;
+        followUsesTrotAnimation = false;
+        followAnimationModeInitialized = false;
+        currentMoveSpeed = 0f;
+        ResetActiveIdleSequence();
+    }
+
+    private void CreateMealRoutinePositions(float mealPoseDistance, out Vector3 firstTarget)
+    {
+        Vector3 awayFromBed = sleepSpot != null
+            ? foodBowl.position - sleepSpot.position
+            : transform.position - foodBowl.position;
+        awayFromBed.y = 0f;
+        if (awayFromBed.sqrMagnitude < 0.0001f)
+            awayFromBed = Vector3.right;
+        awayFromBed.Normalize();
+
+        // 식사 자세는 현재 위치와 무관하게 항상 침대 반대편의 열린 면에 둡니다.
+        mealPosePosition = foodBowl.position + awayFromBed * mealPoseDistance;
+        mealPosePosition.y = transform.position.y;
+        mealApproachStage = 2;
+        firstTarget = mealPosePosition;
+
+        if (sleepSpot == null)
+            return;
+
+        Bounds bedBounds;
+        if (!TryGetRendererBounds(sleepSpot, out bedBounds))
+            return;
+
+        Vector3 bedRight = sleepSpot.right;
+        Vector3 bedForward = sleepSpot.forward;
+        bedRight.y = 0f;
+        bedForward.y = 0f;
+        bedRight = bedRight.sqrMagnitude > 0.0001f ? bedRight.normalized : Vector3.right;
+        bedForward = bedForward.sqrMagnitude > 0.0001f ? bedForward.normalized : Vector3.forward;
+
+        float rightExtent = GetBoundsExtentAlong(bedBounds, bedRight);
+        float forwardExtent = GetBoundsExtentAlong(bedBounds, bedForward);
+        float entranceClearance = Mathf.Clamp(bedEntranceClearance, 0.04f, 0.15f);
+        float routeClearance = Mathf.Max(0.85f, bedRouteClearance);
+        Vector3 entranceDirection = bedForward;
+        Vector3 foodSideDirection = Vector3.Dot(foodBowl.position - bedBounds.center, bedRight) >= 0f
+            ? bedRight
+            : -bedRight;
+
+        mealBedEntrancePosition = bedBounds.center +
+                                  entranceDirection * (forwardExtent + entranceClearance);
+        mealBedEntrancePosition.y = transform.position.y;
+        mealBedCornerPosition = bedBounds.center +
+                                foodSideDirection * (rightExtent + routeClearance) +
+                                entranceDirection * (forwardExtent + entranceClearance);
+        mealBedCornerPosition.y = transform.position.y;
+
+        Vector3 fromBedCenter = transform.position - bedBounds.center;
+        fromBedCenter.y = 0f;
+        float rightProjection = Mathf.Abs(Vector3.Dot(fromBedCenter, bedRight));
+        float forwardProjection = Mathf.Abs(Vector3.Dot(fromBedCenter, bedForward));
+        bool insideBed = rightProjection <= rightExtent + 0.12f &&
+                         forwardProjection <= forwardExtent + 0.12f;
+        bool nearBed = rightProjection <= rightExtent + 1.1f &&
+                       forwardProjection <= forwardExtent + 1.1f;
+        float openFoodSideProjection = Vector3.Dot(
+            transform.position - foodBowl.position,
+            awayFromBed);
+
+        // 이미 그릇의 열린 면에 있다면 침대 우회 경로를 탈 필요가 없습니다.
+        if (openFoodSideProjection >= 0f)
+            return;
+
+        if (insideBed)
+        {
+            // 침대 안에서는 반드시 낮은 입구까지 먼저 나온 뒤 옆으로 빠집니다.
+            mealApproachStage = 0;
+            firstTarget = mealBedEntrancePosition;
+        }
+        else if (nearBed)
+        {
+            // 이미 입구 밖에 있다면 침대 앞을 따라 그릇 쪽 모서리로 이동합니다.
+            mealApproachStage = 1;
+            firstTarget = mealBedCornerPosition;
+        }
+    }
+
+    private void CreateBedRoutinePositions(
+        out Vector3 approachPosition,
+        out Vector3 posePosition,
+        out Quaternion poseRotation)
+    {
+        Bounds bedBounds;
+        if (!TryGetRendererBounds(sleepSpot, out bedBounds))
+            bedBounds = new Bounds(sleepSpot.position, new Vector3(1f, 0.4f, 1f));
+
+        Vector3 bedRight = sleepSpot.right;
+        Vector3 bedForward = sleepSpot.forward;
+        bedRight.y = 0f;
+        bedForward.y = 0f;
+        bedRight = bedRight.sqrMagnitude > 0.0001f ? bedRight.normalized : Vector3.right;
+        bedForward = bedForward.sqrMagnitude > 0.0001f ? bedForward.normalized : Vector3.forward;
+
+        float rightExtent = GetBoundsExtentAlong(bedBounds, bedRight);
+        float forwardExtent = GetBoundsExtentAlong(bedBounds, bedForward);
+        Vector3 entranceDirection = bedForward;
+        float entranceClearance = Mathf.Clamp(bedEntranceClearance, 0.04f, 0.15f);
+        // 침대 오른쪽의 밥그릇과 장애물 검사 반경까지 합친 폭보다 바깥으로 돕니다.
+        // 이전 씬 값(0.22)이 남아 있어도 안전 폭 아래로 줄어들지 않습니다.
+        float routeClearance = Mathf.Max(0.85f, bedRouteClearance);
+
+        // 사진에서 확인한 낮은 앞쪽 벽(+로컬 Z)을 유일한 침대 입구로 사용합니다.
+        bedEntrancePosition = bedBounds.center +
+                              entranceDirection * (forwardExtent + entranceClearance);
+        bedEntrancePosition.y = transform.position.y;
+        approachPosition = bedEntrancePosition;
+
+        Vector3 fromCenter = transform.position - bedBounds.center;
+        fromCenter.y = 0f;
+        float entranceSideProjection = Vector3.Dot(fromCenter, entranceDirection);
+        if (entranceSideProjection >= forwardExtent + entranceClearance)
+        {
+            // 이미 입구 쪽에 있으면 우회하지 않고 입구 중앙으로 바로 갑니다.
+            bedApproachStage = 1;
+        }
+        else
+        {
+            // 침대 뒤나 옆에 있으면 가까운 앞쪽 모서리로 바로 이동합니다.
+            // 오른쪽에 배치된 밥그릇 쪽에서 출발해도 침대 뒤로 되돌아가지 않습니다.
+            Vector3 sideDirection = Vector3.Dot(fromCenter, bedRight) >= 0f
+                ? bedRight
+                : -bedRight;
+            bedFrontCornerWaypoint = bedBounds.center +
+                                     sideDirection * (rightExtent + routeClearance) +
+                                     entranceDirection * (forwardExtent + entranceClearance);
+            bedFrontCornerWaypoint.y = transform.position.y;
+            approachPosition = bedFrontCornerWaypoint;
+            bedApproachStage = 0;
+        }
+
+        posePosition = bedBounds.center + sleepSpot.TransformVector(sleepPoseLocalOffset);
+        posePosition.y = Mathf.Lerp(
+                             bedBounds.min.y,
+                             bedBounds.max.y,
+                             sleepSurfaceHeightRatio) +
+                         groundOffset + sleepPoseLocalOffset.y;
+        // 입구에서는 정면으로 올라간 뒤 침대 안에서 긴 축 방향으로 짧게 회전해 눕습니다.
+        Vector3 poseForward = rightExtent >= forwardExtent ? -bedRight : bedForward;
+        poseRotation = Quaternion.LookRotation(poseForward, Vector3.up);
+    }
+
+    private static bool TryGetRendererBounds(Transform target, out Bounds combinedBounds)
+    {
+        combinedBounds = default;
+        if (target == null)
+            return false;
+
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
+        bool found = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer candidate = renderers[i];
+            if (candidate == null || !candidate.enabled)
+                continue;
+
+            if (!found)
+            {
+                combinedBounds = candidate.bounds;
+                found = true;
+            }
+            else
+            {
+                combinedBounds.Encapsulate(candidate.bounds);
+            }
+        }
+
+        return found;
+    }
+
+    private static float GetBoundsExtentAlong(Bounds bounds, Vector3 direction)
+    {
+        Vector3 extents = bounds.extents;
+        return Mathf.Abs(direction.x) * extents.x +
+               Mathf.Abs(direction.y) * extents.y +
+               Mathf.Abs(direction.z) * extents.z;
+    }
+
+    private void UpdateScheduledRoutineMovement()
+    {
+        // 일반 배회용 장애물 재배치가 예약 경로를 덮어쓰면 침대 주변을 계속 도는
+        // 상태가 될 수 있습니다. 식사/수면은 별도의 안전 경유점을 사용하므로 해제합니다.
+        obstacleIdleTimeRemaining = 0f;
+        obstacleRepositionActive = false;
+        obstacleAvoidanceTimeRemaining = 0f;
+        obstacleAvoidanceDirection = Vector3.zero;
+
+        Vector3 direction = scheduledRoutineTarget - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude <= 0.0025f)
+        {
+            currentMoveSpeed = 0f;
+            turnAnimationActive = false;
+            if (scheduledRoutinePhase == ScheduledRoutinePhase.MovingToSleep &&
+                AdvanceBedApproachRoute())
+            {
+                PlayAnimation(idleBreathingState);
+                return;
+            }
+
+            if (scheduledRoutinePhase == ScheduledRoutinePhase.MovingToFood &&
+                AdvanceMealApproachRoute())
+            {
+                PlayAnimation(idleBreathingState);
+                return;
+            }
+
+            scheduledRoutinePhase = scheduledRoutinePhase == ScheduledRoutinePhase.MovingToSleep
+                ? ScheduledRoutinePhase.AligningToSleep
+                : ScheduledRoutinePhase.AligningToFood;
+            PlayAnimation(idleBreathingState);
+            return;
+        }
+
+        state = BrainState.Trot;
+        movementUsesRunAnimation = false;
+        wanderTarget = scheduledRoutineTarget;
+        if (!turnAnimationActive)
+            PlayAnimation(trotState);
+        TurnBodyToward(direction.normalized);
+        MoveScheduledRoutineForward(trotSpeed, direction.normalized);
+    }
+
+    private void MoveScheduledRoutineForward(float speed, Vector3 targetDirection)
+    {
+        if (turnAnimationActive)
+        {
+            float duration = GetCurrentTurnAnimationDuration();
+            float movementStartRatio = turnAnimationUses180 ? 0.92f : 0.35f;
+            if (turnAnimationElapsed < duration * movementStartRatio)
+                return;
+        }
+
+        float alignment = Vector3.Dot(transform.forward, targetDirection);
+        float movementScale = Mathf.Clamp01((alignment + 0.2f) / 1.2f);
+        currentMoveSpeed = Mathf.MoveTowards(
+            currentMoveSpeed,
+            speed,
+            locomotionAcceleration * Time.deltaTime);
+        float movementDistance = currentMoveSpeed * movementScale * Time.deltaTime;
+        if (movementDistance > 0.0001f)
+            transform.position += transform.forward * movementDistance;
+    }
+
+    private bool AdvanceBedApproachRoute()
+    {
+        if (bedApproachStage == 0)
+        {
+            bedApproachStage = 1;
+            scheduledRoutineTarget = bedEntrancePosition;
+            wanderTarget = scheduledRoutineTarget;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool AdvanceMealApproachRoute()
+    {
+        if (mealApproachStage == 0)
+        {
+            mealApproachStage = 1;
+            scheduledRoutineTarget = mealBedCornerPosition;
+            wanderTarget = scheduledRoutineTarget;
+            return true;
+        }
+
+        if (mealApproachStage == 1)
+        {
+            mealApproachStage = 2;
+            scheduledRoutineTarget = mealPosePosition;
+            wanderTarget = scheduledRoutineTarget;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool UpdateScheduledRoutineAlignment(Transform target)
+    {
+        currentMoveSpeed = 0f;
+        movementUsesRunAnimation = false;
+        state = BrainState.Walk;
+        if (target == null)
+            return true;
+
+        Vector3 direction = target.position - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude < 0.0001f)
+            return true;
+
+        float angle = Mathf.Abs(Vector3.SignedAngle(
+            transform.forward,
+            direction.normalized,
+            Vector3.up));
+        if (!turnAnimationActive && angle <= 6f)
+            return true;
+
+        if (!turnAnimationActive)
+            PlayAnimation(idleBreathingState);
+        TurnBodyToward(direction.normalized);
+        return false;
+    }
+
+    private void BeginEating()
+    {
+        scheduledRoutinePhase = ScheduledRoutinePhase.Eating;
+        scheduledRoutineElapsed = 0f;
+        currentMoveSpeed = 0f;
+        SnapToMealPose();
+        PlayAnimation(eatLoopState);
+    }
+
+    private void BeginEnteringBed()
+    {
+        scheduledRoutinePhase = ScheduledRoutinePhase.EnteringBed;
+        scheduledRoutineElapsed = 0f;
+        currentMoveSpeed = 0f;
+        bedTransitionStartPosition = transform.position;
+        bedTransitionStartRotation = transform.rotation;
+        PlayAnimation(walkState);
+    }
+
+    private void UpdateBedEntry()
+    {
+        scheduledRoutineElapsed += Time.deltaTime;
+        float entryDuration = Mathf.Clamp(bedEntryDuration, 0.1f, 0.7f);
+        float t = Mathf.Clamp01(scheduledRoutineElapsed / entryDuration);
+        float smoothT = t * t * (3f - 2f * t);
+        transform.position = Vector3.Lerp(bedTransitionStartPosition, sleepPosePosition, smoothT);
+        transform.rotation = Quaternion.Slerp(bedTransitionStartRotation, sleepPoseRotation, smoothT);
+        currentMoveSpeed = walkSpeed;
+
+        if (t < 1f)
+            return;
+
+        transform.SetPositionAndRotation(sleepPosePosition, sleepPoseRotation);
+        BeginLyingDownForSleep();
+    }
+
+    private void BeginLyingDownForSleep()
+    {
+        scheduledRoutinePhase = ScheduledRoutinePhase.LyingDown;
+        scheduledRoutineElapsed = 0f;
+        currentMoveSpeed = 0f;
+        PlayAnimation(lyingStartState);
+    }
+
+    private void BeginLeavingBed()
+    {
+        scheduledRoutinePhase = ScheduledRoutinePhase.LeavingBed;
+        scheduledRoutineElapsed = 0f;
+        bedTransitionStartPosition = transform.position;
+        bedTransitionStartRotation = transform.rotation;
+        Vector3 exitDirection = scheduledRoutineTarget - sleepPosePosition;
+        exitDirection.y = 0f;
+        bedExitRotation = exitDirection.sqrMagnitude > 0.0001f
+            ? Quaternion.LookRotation(exitDirection.normalized, Vector3.up)
+            : transform.rotation;
+        PlayAnimation(walkState);
+    }
+
+    private void UpdateBedExit()
+    {
+        scheduledRoutineElapsed += Time.deltaTime;
+        float exitDuration = Mathf.Clamp(bedExitDuration, 0.1f, 0.7f);
+        float t = Mathf.Clamp01(scheduledRoutineElapsed / exitDuration);
+        float smoothT = t * t * (3f - 2f * t);
+        transform.position = Vector3.Lerp(bedTransitionStartPosition, scheduledRoutineTarget, smoothT);
+        transform.rotation = Quaternion.Slerp(bedTransitionStartRotation, bedExitRotation, smoothT);
+        currentMoveSpeed = walkSpeed;
+
+        if (t >= 1f)
+            CompleteSleepRoutine();
+    }
+
+    private void SnapToMealPose()
+    {
+        Vector3 position = transform.position;
+        position.x = scheduledRoutineTarget.x;
+        position.z = scheduledRoutineTarget.z;
+        transform.position = position;
+
+        if (foodBowl == null)
+            return;
+
+        Vector3 direction = foodBowl.position - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude > 0.0001f)
+            transform.rotation = Quaternion.LookRotation(direction.normalized, Vector3.up);
+    }
+
+    private void MaintainRoutinePose()
+    {
+        if (routineInterruptedByGrab)
+            return;
+
+        if (scheduledRoutinePhase == ScheduledRoutinePhase.Eating ||
+            scheduledRoutinePhase == ScheduledRoutinePhase.FinishingMeal)
+        {
+            SnapToMealPose();
+            return;
+        }
+
+        if (scheduledRoutinePhase >= ScheduledRoutinePhase.LyingDown &&
+            scheduledRoutinePhase <= ScheduledRoutinePhase.StandingUp)
+        {
+            transform.SetPositionAndRotation(sleepPosePosition, sleepPoseRotation);
+        }
+    }
+
+    private void UpdateScheduledRoutineAnimation()
+    {
+        currentMoveSpeed = 0f;
+        movementUsesRunAnimation = false;
+        MaintainRoutinePose();
+
+        switch (scheduledRoutinePhase)
+        {
+            case ScheduledRoutinePhase.Eating:
+                scheduledRoutineElapsed += Time.deltaTime;
+                if (scheduledRoutineElapsed >= Mathf.Max(0.1f, eatingDuration))
+                {
+                    scheduledRoutinePhase = ScheduledRoutinePhase.FinishingMeal;
+                    PlayAnimation(eatEndState);
+                }
+                break;
+
+            case ScheduledRoutinePhase.FinishingMeal:
+                if (IsAnimationCycleFinished(eatEndState))
+                    CompleteMealRoutine();
+                break;
+
+            case ScheduledRoutinePhase.LyingDown:
+                if (IsAnimationCycleFinished(lyingStartState))
+                {
+                    scheduledRoutinePhase = ScheduledRoutinePhase.FallingAsleep;
+                    PlayAnimation(sleepStartState);
+                }
+                break;
+
+            case ScheduledRoutinePhase.FallingAsleep:
+                if (IsAnimationCycleFinished(sleepStartState))
+                {
+                    scheduledRoutinePhase = ScheduledRoutinePhase.Sleeping;
+                    scheduledRoutineElapsed = 0f;
+                    PlayAnimation(sleepLoopState);
+                }
+                break;
+
+            case ScheduledRoutinePhase.Sleeping:
+                scheduledRoutineElapsed += Time.deltaTime;
+                if (scheduledRoutineElapsed >= Mathf.Max(0.1f, sleepingDuration))
+                {
+                    scheduledRoutinePhase = ScheduledRoutinePhase.WakingUp;
+                    PlayAnimation(sleepEndState);
+                }
+                break;
+
+            case ScheduledRoutinePhase.WakingUp:
+                if (IsAnimationCycleFinished(sleepEndState))
+                {
+                    scheduledRoutinePhase = ScheduledRoutinePhase.StandingUp;
+                    PlayAnimation(lyingEndState);
+                }
+                break;
+
+            case ScheduledRoutinePhase.StandingUp:
+                if (IsAnimationCycleFinished(lyingEndState))
+                {
+                    if (routineInterruptedByGrab)
+                        CompleteSleepRoutine();
+                    else
+                        BeginLeavingBed();
+                }
+                break;
+        }
+    }
+
+    private void CompleteMealRoutine()
+    {
+        routineInterruptedByGrab = false;
+        mealRequested = false;
+        scheduledRoutinePhase = ScheduledRoutinePhase.None;
+        scheduledRoutineElapsed = 0f;
+        currentAnimation = null;
+        if (sleepRequested)
+            PlayAnimation(idleBreathingState);
+        else
+            EnterAmbientState(false);
+    }
+
+    private void CompleteSleepRoutine()
+    {
+        routineInterruptedByGrab = false;
+        sleepRequested = false;
+        scheduledRoutinePhase = ScheduledRoutinePhase.None;
+        scheduledRoutineElapsed = 0f;
+        currentAnimation = null;
+        if (mealRequested)
+            PlayAnimation(idleBreathingState);
+        else
+            EnterAmbientState(false);
+    }
+
+    #endregion
+
+    #region 공놀이
+
+    private void BeginBallPlay(FetchBallInteraction ball, FetchPhase phase)
+    {
+        ResolveReferences();
+
+        bool leavingBedRequired = scheduledRoutinePhase >= ScheduledRoutinePhase.EnteringBed &&
+                                  scheduledRoutinePhase <= ScheduledRoutinePhase.LeavingBed;
+        if (leavingBedRequired && sleepSpot != null)
+        {
+            CreateBedRoutinePositions(
+                out _,
+                out _,
+                out _);
+            transform.position = bedEntrancePosition;
+        }
+
+        scheduledRoutinePhase = ScheduledRoutinePhase.None;
+        scheduledRoutineElapsed = 0f;
+        mealRequested = false;
+        sleepRequested = false;
+        routineInterruptedByGrab = false;
+        CancelLowerPriorityActions();
+
+        fetchBall = ball;
+        fetchPhase = phase;
+        fetchActionElapsed = 0f;
+        fetchBallAttachedDuringAction = false;
+        fetchBallReleasedDuringAction = false;
+        fetchUsesCornerApproach = false;
+        fetchApproachTarget = ball.WorldPosition;
+        currentAnimation = null;
+        state = BrainState.Run;
+        wanderTarget = ball.WorldPosition;
+    }
+
+    private bool UpdateBallPlay()
+    {
+        if (fetchPhase == FetchPhase.None)
+            return false;
+
+        if (fetchBall == null)
+        {
+            EndBallPlay();
+            return false;
+        }
+
+        if (fetchBall.IsHeldByPlayer &&
+            fetchPhase != FetchPhase.ApproachingHeldBall &&
+            fetchPhase != FetchPhase.WatchingHeldBall)
+        {
+            fetchPhase = FetchPhase.ApproachingHeldBall;
+            fetchActionElapsed = 0f;
+        }
+        else if (fetchBall.IsCarriedByDog &&
+                 fetchPhase != FetchPhase.PickingUpBall &&
+                 fetchPhase != FetchPhase.ReturningBall &&
+                 fetchPhase != FetchPhase.DroppingBall)
+        {
+            fetchPhase = FetchPhase.ReturningBall;
+            fetchActionElapsed = 0f;
+        }
+
+        switch (fetchPhase)
+        {
+            case FetchPhase.ApproachingHeldBall:
+                if (!fetchBall.IsHeldByPlayer)
+                {
+                    if (fetchBall.WasThrown)
+                        fetchPhase = FetchPhase.ChasingBall;
+                    else
+                        EndBallPlay();
+                    return true;
+                }
+
+                if (MoveTowardFetchTarget(
+                        GetPlayerPosition(),
+                        heldBallWaitDistance,
+                        true))
+                {
+                    fetchPhase = FetchPhase.WatchingHeldBall;
+                    UpdateStationaryFetchPose(fetchBall.WorldPosition);
+                }
+                return true;
+
+            case FetchPhase.WatchingHeldBall:
+                if (!fetchBall.IsHeldByPlayer)
+                {
+                    if (fetchBall.WasThrown)
+                        fetchPhase = FetchPhase.ChasingBall;
+                    else
+                        EndBallPlay();
+                    return true;
+                }
+
+                Vector3 playerOffset = GetPlayerPosition() - transform.position;
+                playerOffset.y = 0f;
+                if (playerOffset.sqrMagnitude >
+                    (heldBallWaitDistance + 0.45f) * (heldBallWaitDistance + 0.45f))
+                {
+                    fetchPhase = FetchPhase.ApproachingHeldBall;
+                    return true;
+                }
+
+                UpdateStationaryFetchPose(fetchBall.WorldPosition);
+                return true;
+
+            case FetchPhase.ChasingBall:
+                if (fetchBall.IsHeldByPlayer)
+                {
+                    fetchPhase = FetchPhase.ApproachingHeldBall;
+                    return true;
+                }
+
+                UpdateFetchBallApproachTarget();
+                float ballDistance = GetPlanarDistance(fetchBall.WorldPosition, transform.position);
+                float pickupReach = fetchUsesCornerApproach
+                    ? Mathf.Max(ballPickupDistance, cornerBallPickupReach)
+                    : ballPickupDistance;
+                bool reachedApproachPoint = GetPlanarDistance(
+                    fetchApproachTarget,
+                    transform.position) <= 0.12f;
+                bool canReachBall = ballDistance <= ballPickupDistance ||
+                                    (fetchUsesCornerApproach &&
+                                     reachedApproachPoint &&
+                                     ballDistance <= pickupReach);
+                if (canReachBall && fetchBall.CanBePickedUpByDog)
+                {
+                    BeginBallPickupAction();
+                    return true;
+                }
+
+                MoveTowardFetchTarget(
+                    fetchApproachTarget,
+                    fetchUsesCornerApproach ? 0.08f : ballPickupDistance,
+                    true);
+                return true;
+
+            case FetchPhase.PickingUpBall:
+                if (fetchBall.IsHeldByPlayer)
+                {
+                    fetchPhase = FetchPhase.ApproachingHeldBall;
+                    return true;
+                }
+
+                float actionPickupReach = fetchUsesCornerApproach
+                    ? Mathf.Max(ballPickupDistance, cornerBallPickupReach)
+                    : ballPickupDistance * 1.8f;
+                if (!fetchBallAttachedDuringAction &&
+                    GetPlanarDistance(fetchBall.WorldPosition, transform.position) >
+                    actionPickupReach)
+                {
+                    fetchPhase = FetchPhase.ChasingBall;
+                    return true;
+                }
+
+                fetchActionElapsed += Time.deltaTime;
+                MaintainFetchActionPose(fetchBall.WorldPosition);
+                float attachTime = Mathf.Max(0.05f, ballBiteDuration * ballBiteAttachRatio);
+                if (!fetchBallAttachedDuringAction && fetchActionElapsed >= attachTime)
+                {
+                    if (fetchBall.TryAttachToDog(this))
+                    {
+                        fetchBallAttachedDuringAction = true;
+                    }
+                    else
+                    {
+                        fetchPhase = FetchPhase.ChasingBall;
+                        return true;
+                    }
+                }
+
+                if (fetchActionElapsed >= Mathf.Max(attachTime, ballBiteDuration))
+                {
+                    if (fetchBallAttachedDuringAction)
+                    {
+                        fetchPhase = FetchPhase.ReturningBall;
+                        fetchActionElapsed = 0f;
+                        currentAnimation = null;
+                    }
+                    else
+                    {
+                        fetchPhase = FetchPhase.ChasingBall;
+                    }
+                }
+                return true;
+
+            case FetchPhase.ReturningBall:
+                if (!fetchBall.IsCarriedByDog)
+                {
+                    EndBallPlay();
+                    return true;
+                }
+
+                if (MoveTowardFetchTarget(
+                        GetPlayerPosition(),
+                        ballReturnDistance,
+                        true))
+                {
+                    fetchPhase = FetchPhase.DroppingBall;
+                    fetchActionElapsed = 0f;
+                    fetchBallReleasedDuringAction = false;
+                    currentMoveSpeed = 0f;
+                    turnAnimationActive = false;
+                    PlayAnimation(ballDropState);
+                }
+                return true;
+
+            case FetchPhase.DroppingBall:
+                fetchActionElapsed += Time.deltaTime;
+                MaintainFetchActionPose(GetPlayerPosition());
+                float releaseTime = Mathf.Max(0.05f, ballDropDuration * ballDropReleaseRatio);
+                if (!fetchBallReleasedDuringAction && fetchActionElapsed >= releaseTime)
+                {
+                    ReleaseFetchBallFromMouth();
+                    fetchBallReleasedDuringAction = true;
+                }
+
+                if (fetchActionElapsed >= Mathf.Max(releaseTime, ballDropDuration))
+                    EndBallPlay();
+                return true;
+        }
+
+        EndBallPlay();
+        return false;
+    }
+
+    private bool MoveTowardFetchTarget(Vector3 targetPosition, float stopDistance, bool run)
+    {
+        Vector3 direction = targetPosition - transform.position;
+        direction.y = 0f;
+        wanderTarget = targetPosition;
+        if (direction.sqrMagnitude <= stopDistance * stopDistance)
+        {
+            UpdateStationaryFetchPose(targetPosition);
+            return true;
+        }
+
+        state = run ? BrainState.Run : BrainState.Trot;
+        movementUsesRunAnimation = run;
+        if (!turnAnimationActive)
+            PlayAnimation(run ? runState : trotState);
+        TurnBodyToward(direction.normalized);
+        MoveForward(run ? runSpeed : trotSpeed);
+        return false;
+    }
+
+    private void UpdateStationaryFetchPose(Vector3 lookTarget, bool usePlayingIdle = false)
+    {
+        state = BrainState.Idle;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        if (!turnAnimationActive)
+            PlayAnimation(usePlayingIdle ? idlePlayingState : idleBreathingState);
+
+        Vector3 direction = lookTarget - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude > 0.0001f)
+            TurnBodyToward(direction.normalized);
+    }
+
+    private void BeginBallPickupAction()
+    {
+        fetchPhase = FetchPhase.PickingUpBall;
+        fetchActionElapsed = 0f;
+        fetchBallAttachedDuringAction = false;
+        currentMoveSpeed = 0f;
+        movementUsesRunAnimation = false;
+        turnAnimationActive = false;
+        FaceFetchTargetImmediately(fetchBall.WorldPosition);
+        PlayAnimation(ballBiteState);
+    }
+
+    private void MaintainFetchActionPose(Vector3 lookTarget)
+    {
+        state = BrainState.Idle;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        FaceFetchTargetImmediately(lookTarget);
+    }
+
+    private void FaceFetchTargetImmediately(Vector3 targetPosition)
+    {
+        Vector3 direction = targetPosition - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude > 0.0001f)
+            transform.rotation = Quaternion.LookRotation(direction.normalized, Vector3.up);
+    }
+
+    private void UpdateFetchBallApproachTarget()
+    {
+        fetchApproachTarget = fetchBall.WorldPosition;
+        fetchApproachTarget.y = transform.position.y;
+        fetchUsesCornerApproach = TryFindClearFetchApproachPoint(
+            fetchBall.WorldPosition,
+            out Vector3 clearPoint);
+        if (fetchUsesCornerApproach)
+            fetchApproachTarget = clearPoint;
+    }
+
+    private bool TryFindClearFetchApproachPoint(
+        Vector3 ballPosition,
+        out Vector3 approachPoint)
+    {
+        approachPoint = ballPosition;
+        approachPoint.y = transform.position.y;
+        if (!IsFetchBallNearObstacle(ballPosition))
+            return false;
+
+        float bestScore = float.PositiveInfinity;
+        bool found = false;
+        Vector3 dogToBall = transform.position - ballPosition;
+        dogToBall.y = 0f;
+        Vector3 preferredDirection = dogToBall.sqrMagnitude > 0.0001f
+            ? dogToBall.normalized
+            : -transform.forward;
+
+        const int directionCount = 16;
+        for (int i = 0; i < directionCount; i++)
+        {
+            Vector3 direction = Quaternion.AngleAxis(
+                i * (360f / directionCount),
+                Vector3.up) * Vector3.forward;
+            Vector3 candidate = ballPosition + direction * cornerBallApproachDistance;
+            candidate.y = transform.position.y;
+            if (!IsFetchApproachPointClear(candidate) ||
+                HasFetchBlockingHit(
+                    ballPosition + Vector3.up * 0.18f,
+                    direction,
+                    cornerBallApproachDistance - 0.08f,
+                    0.06f))
+                continue;
+
+            float travelDistance = GetPlanarDistance(transform.position, candidate);
+            float directionPenalty = 1f - Vector3.Dot(direction, preferredDirection);
+            float score = travelDistance + directionPenalty * 0.3f;
+            if (score >= bestScore)
+                continue;
+
+            bestScore = score;
+            approachPoint = candidate;
+            found = true;
+        }
+
+        return found;
+    }
+
+    private bool IsFetchBallNearObstacle(Vector3 ballPosition)
+    {
+        const int directionCount = 8;
+        for (int i = 0; i < directionCount; i++)
+        {
+            Vector3 direction = Quaternion.AngleAxis(
+                i * (360f / directionCount),
+                Vector3.up) * Vector3.forward;
+            if (HasFetchBlockingHit(
+                    ballPosition + Vector3.up * 0.18f,
+                    direction,
+                    0.48f,
+                    0.07f))
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool IsFetchApproachPointClear(Vector3 point)
+    {
+        Vector3 bottom = point + Vector3.up * 0.3f;
+        Vector3 top = point + Vector3.up * 0.68f;
+        Collider[] overlaps = Physics.OverlapCapsule(
+            bottom,
+            top,
+            Mathf.Max(0.18f, obstacleCheckRadius * 0.82f),
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < overlaps.Length; i++)
+        {
+            if (IsOwnCollider(overlaps[i]) ||
+                (fetchBall != null && fetchBall.OwnsCollider(overlaps[i])))
+                continue;
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool HasFetchBlockingHit(
+        Vector3 origin,
+        Vector3 direction,
+        float distance,
+        float radius)
+    {
+        RaycastHit[] hits = Physics.SphereCastAll(
+            origin,
+            radius,
+            direction.normalized,
+            Mathf.Max(0.01f, distance),
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider candidate = hits[i].collider;
+            if (IsOwnCollider(candidate) ||
+                (fetchBall != null && fetchBall.OwnsCollider(candidate)))
+                continue;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ReleaseFetchBallFromMouth()
+    {
+        if (fetchBall == null || !fetchBall.IsCarriedByDog)
+            return;
+
+        Vector3 releasePosition = fetchBall.WorldPosition + transform.forward * 0.04f;
+        Vector3 releaseVelocity = transform.forward * 0.28f + Vector3.down * 0.55f;
+        Vector3 releaseSpin = transform.right * 4.5f + Vector3.up * 1.5f;
+        fetchBall.DropFromDog(releasePosition, releaseVelocity, releaseSpin);
+    }
+
+    private void EndBallPlay()
+    {
+        fetchPhase = FetchPhase.None;
+        fetchBall = null;
+        fetchActionElapsed = 0f;
+        turnAnimationActive = false;
+        turnAnimationElapsed = 0f;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        currentAnimation = null;
+        EnterAmbientState(false);
+    }
+
+    private static float GetPlanarDistance(Vector3 a, Vector3 b)
+    {
+        Vector3 offset = a - b;
+        offset.y = 0f;
+        return offset.magnitude;
+    }
+
+    #endregion
+
     #region 플레이어 인식과 추적
 
     private bool IsPlayerInRange()
@@ -603,6 +1967,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (distance <= 0.001f)
         {
             followUsesRunAnimation = false;
+            followUsesTrotAnimation = false;
             followAnimationModeInitialized = true;
             movementUsesRunAnimation = false;
             turnAnimationActive = false;
@@ -615,6 +1980,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         {
             // 가만히 있는 애니메이션을 재생하는 동안에는 이동과 회전을 모두 하지 않습니다.
             followUsesRunAnimation = false;
+            followUsesTrotAnimation = false;
             followAnimationModeInitialized = true;
             movementUsesRunAnimation = false;
             turnAnimationActive = false;
@@ -633,34 +1999,56 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         if (!followAnimationModeInitialized)
         {
-            // 플레이어를 처음 인식한 순간에는 현재 거리로만 시작 상태를 정합니다.
-            followUsesRunAnimation = playerRunDistance > playerStopDistance &&
-                                     distance >= playerRunDistance;
+            // 플레이어를 처음 인식한 순간에는 현재 거리로 걷기, 트롯, 달리기 상태를 정합니다.
+            followUsesRunAnimation = distance >= playerRunDistance;
+            followUsesTrotAnimation = !followUsesRunAnimation &&
+                                      distance >= playerTrotDistance;
             followAnimationModeInitialized = true;
         }
         else if (followUsesRunAnimation)
         {
-            // 달리기 중에는 기준 거리보다 충분히 가까워졌을 때만 걷기로 내립니다.
+            // 달리기 중에는 충분히 가까워졌을 때 트롯 또는 걷기로 내립니다.
             float runExitDistance = Mathf.Max(
-                playerStopDistance,
+                playerTrotDistance,
                 playerRunDistance - runWalkHysteresis);
             if (distance <= runExitDistance)
+            {
                 followUsesRunAnimation = false;
+                followUsesTrotAnimation = distance > Mathf.Max(
+                    playerStopDistance,
+                    playerTrotDistance - runWalkHysteresis);
+            }
+        }
+        else if (followUsesTrotAnimation)
+        {
+            if (distance >= playerRunDistance + runWalkHysteresis)
+            {
+                followUsesRunAnimation = true;
+                followUsesTrotAnimation = false;
+            }
+            else if (distance <= Mathf.Max(
+                playerStopDistance,
+                playerTrotDistance - runWalkHysteresis))
+            {
+                followUsesTrotAnimation = false;
+            }
         }
         else
         {
-            // 걷기 중에는 기준 거리보다 충분히 멀어졌을 때만 다시 달리기로 올립니다.
-            float runEnterDistance = playerRunDistance + runWalkHysteresis;
-            if (distance >= runEnterDistance)
+            if (distance >= playerRunDistance + runWalkHysteresis)
                 followUsesRunAnimation = true;
+            else if (distance >= playerTrotDistance + runWalkHysteresis)
+                followUsesTrotAnimation = true;
         }
 
         bool shouldRun = followUsesRunAnimation;
-        float speed = shouldRun ? runSpeed : walkSpeed;
+        bool shouldTrot = !shouldRun && followUsesTrotAnimation;
+        float speed = shouldRun ? runSpeed : shouldTrot ? trotSpeed : walkSpeed;
+        string locomotionState = shouldRun ? runState : shouldTrot ? trotState : walkState;
 
-        // 달리기에서 걷기로 바뀌는 순간 이전 달리기 방향전환을 계속 유지하면
-        // 걷기 루프가 늦게 재생되거나 전환 애니메이션의 중간 자세에서 멈춘 것처럼 보일 수 있습니다.
-        // 이동 모드가 바뀌면 이전 모드의 방향전환을 즉시 취소하고 새 루프를 시작합니다.
+        // 걷기, 트롯, 달리기 모드가 바뀌는 순간 이전 방향 전환을 계속 유지하면
+        // 새 루프가 늦게 재생되거나 전환 애니메이션 중간 자세에서 멈춘 것처럼 보일 수 있습니다.
+        // 이동 모드가 바뀌면 이전 방향 전환을 취소하고 새 루프를 시작합니다.
         if (turnAnimationActive && turnAnimationUsesRun != shouldRun)
         {
             turnAnimationActive = false;
@@ -669,7 +2057,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         movementUsesRunAnimation = shouldRun;
         if (!turnAnimationActive)
-            PlayAnimation(shouldRun ? runState : walkState);
+            PlayAnimation(locomotionState);
         TurnBodyToward(direction.normalized);
         MoveForward(speed);
     }
@@ -737,6 +2125,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         obstacleIdleTimeRemaining = 0f;
         movementUsesRunAnimation = false;
         followUsesRunAnimation = false;
+        followUsesTrotAnimation = false;
         followAnimationModeInitialized = false;
         ResetActiveIdleSequence();
         float roll = Random.value;
@@ -837,7 +2226,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         {
             float signedTurnAngle = Vector3.SignedAngle(transform.forward, direction, Vector3.up);
             float turnAngleThreshold = movementUsesRunAnimation ? runTurnAngleThreshold : walkTurnAngleThreshold;
-            bool canUseWalkTurn = state == BrainState.Walk || state == BrainState.FollowPlayer;
+            bool canUseWalkTurn = state == BrainState.Walk ||
+                                  state == BrainState.Trot ||
+                                  state == BrainState.FollowPlayer;
             bool shouldPlayTurn = movementUsesRunAnimation || canUseWalkTurn;
 
             if (shouldPlayTurn && Mathf.Abs(signedTurnAngle) >= turnAngleThreshold)
@@ -846,9 +2237,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         if (turnAnimationActive)
         {
-            // 전환 애니메이션 초반에는 기존 진행 방향을 유지하고, 후반부부터 목표 방향으로 몸을 돌립니다.
-            float duration = turnAnimationUsesRun ? runTurnAnimationDuration : walkTurnAnimationDuration;
-            float rotationStartTime = duration * 0.35f;
+            // 전환 애니메이션의 동작에 맞춰 목표 방향으로 몸을 부드럽게 돌립니다.
+            float duration = GetCurrentTurnAnimationDuration();
+            float rotationStartTime = duration * (turnAnimationUses180 ? 0.12f : 0.35f);
             float rotationProgress = Mathf.InverseLerp(rotationStartTime, duration, turnAnimationElapsed);
             if (rotationProgress > 0f)
             {
@@ -870,22 +2261,51 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         turnAnimationActive = true;
         turnAnimationUsesRun = useRunTurn;
+        turnAnimationUses180 = Mathf.Abs(signedTurnAngle) >= turn180AngleThreshold &&
+                               !string.IsNullOrEmpty(turnLeft180State) &&
+                               !string.IsNullOrEmpty(turnRight180State);
         turnAnimationElapsed = 0f;
         turnTargetDirection = direction.normalized;
         turnStartRotation = transform.rotation;
+        turnAnimationResumeState = GetCurrentLocomotionState();
 
-        if (useRunTurn)
+        if (turnAnimationUses180)
+            PlayAnimation(signedTurnAngle > 0f ? turnRight180State : turnLeft180State);
+        else if (useRunTurn)
             PlayAnimation(signedTurnAngle > 0f ? runLeanRightState : runLeanLeftState);
         else
             PlayAnimation(signedTurnAngle > 0f ? walkTurnRightState : walkTurnLeftState);
+    }
+
+    private float GetCurrentTurnAnimationDuration()
+    {
+        if (turnAnimationUses180)
+            return Mathf.Max(0.1f, turn180AnimationDuration);
+
+        return turnAnimationUsesRun
+            ? Mathf.Max(0.05f, runTurnAnimationDuration)
+            : Mathf.Max(0.05f, walkTurnAnimationDuration);
+    }
+
+    private string GetCurrentLocomotionState()
+    {
+        if (movementUsesRunAnimation || state == BrainState.Run)
+            return runState;
+
+        if (state == BrainState.Trot ||
+            (state == BrainState.FollowPlayer && followUsesTrotAnimation))
+            return trotState;
+
+        return walkState;
     }
 
     private void MoveForward(float speed)
     {
         if (turnAnimationActive)
         {
-            float duration = turnAnimationUsesRun ? runTurnAnimationDuration : walkTurnAnimationDuration;
-            if (turnAnimationElapsed < duration * 0.35f)
+            float duration = GetCurrentTurnAnimationDuration();
+            float movementStartRatio = turnAnimationUses180 ? 0.92f : 0.35f;
+            if (turnAnimationElapsed < duration * movementStartRatio)
                 return;
         }
 
@@ -987,7 +2407,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         for (int i = 0; i < hits.Length; i++)
         {
             Collider hitCollider = hits[i].collider;
-            if (IsOwnCollider(hitCollider) || hits[i].distance >= nearestDistance)
+            if (IsOwnCollider(hitCollider) ||
+                IsScheduledRoutineTargetCollider(hitCollider) ||
+                (fetchBall != null && fetchBall.OwnsCollider(hitCollider)) ||
+                hits[i].distance >= nearestDistance)
                 continue;
 
             nearestDistance = hits[i].distance;
@@ -1005,6 +2428,21 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         Transform candidateTransform = candidate.transform;
         return candidateTransform == transform || candidateTransform.IsChildOf(transform);
+    }
+
+    private bool IsScheduledRoutineTargetCollider(Collider candidate)
+    {
+        if (candidate == null || scheduledRoutinePhase == ScheduledRoutinePhase.None)
+            return false;
+
+        Transform candidateTransform = candidate.transform;
+        bool belongsToFoodBowl = foodBowl != null &&
+                                 (candidateTransform == foodBowl ||
+                                  candidateTransform.IsChildOf(foodBowl));
+        bool belongsToBed = sleepSpot != null &&
+                            (candidateTransform == sleepSpot ||
+                             candidateTransform.IsChildOf(sleepSpot));
+        return belongsToFoodBowl || belongsToBed;
     }
 
     private bool TryGetObstacleAvoidanceDirection(out Vector3 avoidanceDirection)
@@ -1083,20 +2521,34 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void UpdateHeadLook()
     {
+        UpdateHeadLookAt(GetPlayerPosition());
+    }
+
+    private void UpdateHeadLookAt(Vector3 targetPosition)
+    {
         if (headBone == null && neckBone == null)
             return;
 
-        Vector3 targetPosition = GetPlayerPosition();
-        Vector3 targetDirection = targetPosition - transform.position;
-        targetDirection.y = 0f;
-        if (targetDirection.sqrMagnitude < 0.0001f)
+        Vector3 lookOrigin = headBone != null
+            ? headBone.position
+            : neckBone.position;
+        Vector3 fullTargetDirection = targetPosition - lookOrigin;
+        Vector3 targetDirection = Vector3.ProjectOnPlane(fullTargetDirection, Vector3.up);
+        if (targetDirection.sqrMagnitude < 0.0001f ||
+            fullTargetDirection.sqrMagnitude < 0.0001f)
             return;
 
+        float horizontalDistance = Mathf.Max(0.001f, targetDirection.magnitude);
         targetDirection.Normalize();
         float signedYaw = Vector3.SignedAngle(transform.forward, targetDirection, Vector3.up);
         float limitedYaw = Mathf.Clamp(signedYaw, -headYawLimit, headYawLimit);
         float blend = 1f - Mathf.Exp(-headTurnSpeed * Time.deltaTime);
         smoothedHeadYaw = Mathf.LerpAngle(smoothedHeadYaw, limitedYaw, blend);
+        float pitch = Mathf.Atan2(
+            fullTargetDirection.y,
+            horizontalDistance) * Mathf.Rad2Deg;
+        float limitedPitch = Mathf.Clamp(pitch, -headPitchLimit, headPitchLimit);
+        smoothedHeadPitch = Mathf.LerpAngle(smoothedHeadPitch, limitedPitch, blend);
 
         // 뼈의 월드 회전을 목표 회전으로 직접 덮어쓰면 얼굴 정면축이 +Z가 아닌 리그에서
         // 애니메이터 포즈와 서로 반대 방향으로 보정되어 좌우 플립이 발생합니다.
@@ -1104,21 +2556,36 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         float neckShare = headBone != null ? 0.35f : 1f;
         float headShare = neckBone != null ? 0.65f : 1f;
         if (neckBone != null)
-            neckBone.rotation = Quaternion.AngleAxis(
+        {
+            Quaternion neckYaw = Quaternion.AngleAxis(
                 smoothedHeadYaw * neckShare,
-                Vector3.up) * neckBone.rotation;
+                Vector3.up);
+            Quaternion neckPitch = Quaternion.AngleAxis(
+                -smoothedHeadPitch * neckShare,
+                transform.right);
+            neckBone.rotation = neckYaw * neckPitch * neckBone.rotation;
+        }
         if (headBone != null)
-            headBone.rotation = Quaternion.AngleAxis(
+        {
+            Quaternion headYaw = Quaternion.AngleAxis(
                 smoothedHeadYaw * headShare,
-                Vector3.up) * headBone.rotation;
+                Vector3.up);
+            Quaternion headPitch = Quaternion.AngleAxis(
+                -smoothedHeadPitch * headShare,
+                transform.right);
+            headBone.rotation = headYaw * headPitch * headBone.rotation;
+        }
     }
 
     private bool CanLookAtPlayerWithoutFightingMovement()
     {
+        if (fetchPhase != FetchPhase.None)
+            return false;
+
         if (turnAnimationActive || obstacleRepositionActive)
             return false;
 
-        if (state == BrainState.Walk || state == BrainState.Run)
+        if (state == BrainState.Walk || state == BrainState.Trot || state == BrainState.Run)
             return false;
 
         if (whistleResponseActive && whistleIdleTimeRemaining <= 0f)
@@ -1138,6 +2605,13 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void KeepOnGround()
     {
+        // 침대에는 콜라이더가 없어 일반 바닥 레이캐스트를 쓰면 수면 중 루트가
+        // 바닥으로 다시 내려가 침대를 관통합니다. 침대 전용 자세가 Y를 직접 유지합니다.
+        if (!routineInterruptedByGrab &&
+            scheduledRoutinePhase >= ScheduledRoutinePhase.EnteringBed &&
+            scheduledRoutinePhase <= ScheduledRoutinePhase.LeavingBed)
+            return;
+
         Ray ray = new Ray(transform.position + Vector3.up * 1.5f, Vector3.down);
         RaycastHit[] hits = Physics.RaycastAll(
             ray,
@@ -1175,7 +2649,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (HasIdleVariations() && !IsConfiguredIdleState(stateName))
             ResetActiveIdleSequence();
 
-        targetAnimatorSpeed = IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
+        targetAnimatorSpeed = stateName == trotState
+            ? trotAnimationSpeed
+            : IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
 
         if (currentAnimation == stateName && IsAnimatorInRequestedState(stateName))
             return;
@@ -1218,6 +2694,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return false;
 
         return stateName == walkState ||
+               stateName == trotState ||
                stateName == runState ||
                stateName == runLeanRightState ||
                stateName == runLeanLeftState ||

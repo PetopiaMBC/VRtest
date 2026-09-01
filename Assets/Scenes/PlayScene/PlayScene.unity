@@ -1579,11 +1579,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 2243020122175513880, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 80
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122175513880, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122246761220, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1627,11 +1627,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122829345126, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 80
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122829345126, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122894124685, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1655,11 +1655,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020123108092049, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 89.4
       objectReference: {fileID: 0}
     - target: {fileID: 2243020123108092049, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573833148750, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1683,19 +1683,19 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573999888530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 80
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573999888530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574750989019, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 80
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574750989019, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574852684551, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1719,11 +1719,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575037781530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 80
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575037781530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575382347206, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1747,11 +1747,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575634488915, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 0
+      value: 89.4
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575634488915, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 0
+      value: 46
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575962273167, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1875,6 +1875,10 @@ MonoBehaviour:
   lockCursorOnPlay: 1
   roomCenter: {x: 0, y: 0, z: 0}
   roomHalfExtent: 4.55
+  enableCrouch: 1
+  crouchViewDrop: 0.65
+  crouchTransitionSpeed: 5
+  crouchedControllerHeight: 1.05
 --- !u!4 &1453919416 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 8806329115733545878, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
@@ -1946,6 +1950,7 @@ MonoBehaviour:
   naturalLiftDuration: 0.45
   naturalLiftArcHeight: 0.1
   naturalLowerDuration: 0.7
+  skipNaturalLoweringForCompletionAnimation: 1
   naturalReleaseGroundClearance: 0.025
   naturalReleaseAnimationBlendDuration: 0.38
   playPantingWhileHeld: 1
@@ -1965,7 +1970,7 @@ MonoBehaviour:
   heldHeadIdleStrength: 0.18
   heldCollisionMask:
     serializedVersion: 2
-    m_Bits: 4294967291
+    m_Bits: 51
   heldCollisionSkin: 0.025
   heldCollisionBoundsScale: 0.94
   heldCollisionSlideIterations: 3
@@ -1986,6 +1991,7 @@ MonoBehaviour:
   playerRunDistance: 2.7
   runWalkHysteresis: 0.55
   headYawLimit: 42
+  headPitchLimit: 38
   headTurnSpeed: 7
   playerTransform: {fileID: 0}
   playerCamera: {fileID: 0}
@@ -1993,7 +1999,9 @@ MonoBehaviour:
   whistleIdleDurationMin: 2
   whistleIdleDurationMax: 3
   walkSpeed: 1.05
-  runSpeed: 1.85
+  runSpeed: 2.3
+  trotSpeed: 1.45
+  playerTrotDistance: 2.2
   locomotionAcceleration: 4
   bodyTurnSpeed: 210
   wanderRadius: 4.5
@@ -2013,6 +2021,36 @@ MonoBehaviour:
   runDurationMin: 1.2
   runDurationMax: 2.6
   ambientRunChance: 0.16
+  foodBowl: {fileID: 0}
+  sleepSpot: {fileID: 0}
+  eatKey: 19
+  eatingDuration: 10
+  foodStoppingDistance: 0.48
+  sleepKey: 32
+  sleepingDuration: 30
+  bedEntranceClearance: 0.08
+  bedRouteClearance: 0.22
+  sleepSurfaceHeightRatio: 0.43
+  sleepPoseLocalOffset: {x: 0, y: 0, z: 0}
+  bedEntryDuration: 1.15
+  bedExitDuration: 0.9
+  eatLoopState: Arm_Shiba|Eat_loop
+  eatEndState: Arm_Shiba|EatDrink_end
+  sleepStartState: Arm_Shiba|Lie_belly_sleep_start
+  sleepLoopState: Arm_Shiba|Lie_belly_sleep
+  sleepEndState: Arm_Shiba|Lie_belly_sleep_end
+  heldBallWaitDistance: 1.45
+  ballPickupDistance: 0.42
+  cornerBallApproachDistance: 0.52
+  cornerBallPickupReach: 0.78
+  ballReturnDistance: 1.25
+  ballBiteDuration: 1.05
+  ballBiteAttachRatio: 0.48
+  ballDropDuration: 1.05
+  ballDropReleaseRatio: 0.42
+  ballBiteState: Arm_Shiba|Attack_Bite_IP
+  ballDropState: Arm_Shiba|EatDrink_end
+  ballMouthOffset: {x: 0, y: -0.045, z: 0.13}
   animator: {fileID: 0}
   idleBreathingState: Arm_Shiba|Idle_1
   idlePlayingState: Arm_Shiba|Idle_2
@@ -2040,14 +2078,20 @@ MonoBehaviour:
   releaseState: Arm_Shiba|Put_down
   walkState: Arm_Shiba|Walk_F_IP
   runState: Arm_Shiba|Run_F_IP
+  trotState: Arm_Shiba|Trot_F_IP
   runLeanRightState: Arm_Shiba|Run_R_IP
   runLeanLeftState: Arm_Shiba|Run_L_IP
   walkTurnRightState: Arm_Shiba|Walk_R_IP
   walkTurnLeftState: Arm_Shiba|Walk_L_IP
+  turnLeft180State: Arm_Shiba|Turn_L180_IP
+  turnRight180State: Arm_Shiba|Turn_R180_IP
+  turn180AngleThreshold: 105
+  turn180AnimationDuration: 1
   animationBlendTime: 0.18
   locomotionBlendTime: 0.28
-  runAnimationSpeed: 1.3
-  animationSpeedChangeRate: 3
+  runAnimationSpeed: 1.55
+  trotAnimationSpeed: 1.35
+  animationSpeedChangeRate: 4.5
   runTurnAngleThreshold: 12
   runTurnAnimationDuration: 0.35
   walkTurnAngleThreshold: 12
@@ -2233,6 +2277,129 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1733983989}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1001 &1834636815
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -3.2023647
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.373
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.261
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3383404122970076374, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4307346552706188216, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_Name
+      value: Big_ball_1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4307346552706188216, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      propertyPath: m_StaticEditorFlags
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4307346552706188216, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1834636818}
+    - targetCorrespondingSourceObject: {fileID: 4307346552706188216, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1834636817}
+  m_SourcePrefab: {fileID: 100100000, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+--- !u!1 &1834636816 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4307346552706188216, guid: 96fd1e974c86c264cb476daaf0c03c52, type: 3}
+  m_PrefabInstance: {fileID: 1834636815}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1834636817
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1834636816}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 272b97421b36d4549b7c046ae5ec1ca4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FetchBallInteraction
+  interactionKey: 21
+  interactionDistance: 4
+  holdDistance: 0.72
+  holdVerticalOffset: -0.18
+  heldFollowSpeed: 24
+  throwSpeed: 7.5
+  throwUpwardBoost: 1.35
+  throwSpin: 9
+  dogPickupDelay: 0.45
+  dogPickupMaximumSpeed: 3.5
+  playerCamera: {fileID: 0}
+  companionAI: {fileID: 0}
+--- !u!54 &1834636818
+Rigidbody:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1834636816}
+  serializedVersion: 5
+  m_Mass: 1
+  m_LinearDamping: 0
+  m_AngularDamping: 0.05
+  m_CenterOfMass: {x: 0, y: 0, z: 0}
+  m_InertiaTensor: {x: 1, y: 1, z: 1}
+  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_IncludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ExcludeLayers:
+    serializedVersion: 2
+    m_Bits: 0
+  m_ImplicitCom: 1
+  m_ImplicitTensor: 1
+  m_UseGravity: 1
+  m_IsKinematic: 0
+  m_Interpolate: 0
+  m_Constraints: 0
+  m_CollisionDetection: 0
 --- !u!1 &2035515466
 GameObject:
   m_ObjectHideFlags: 0
@@ -2409,6 +2576,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: German Shepherd Companion
       objectReference: {fileID: 0}
+    - target: {fileID: 4248197375101405997, guid: 2658abc5fee3a7548a90543920743983, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5290822076645147826, guid: 2658abc5fee3a7548a90543920743983, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -2461,6 +2632,8 @@ MonoBehaviour:
   whistleIdleDurationMax: 3
   walkSpeed: 0.9
   runSpeed: 3
+  trotSpeed: 1.12
+  playerTrotDistance: 2.2
   locomotionAcceleration: 4
   bodyTurnSpeed: 210
   wanderRadius: 4.5
@@ -2480,6 +2653,29 @@ MonoBehaviour:
   runDurationMin: 1.2
   runDurationMax: 2.6
   ambientRunChance: 0.16
+  foodBowl: {fileID: 0}
+  sleepSpot: {fileID: 0}
+  eatKey: 19
+  eatingDuration: 10
+  foodStoppingDistance: 0.48
+  sleepKey: 32
+  sleepingDuration: 30
+  bedEntranceClearance: 0.08
+  bedRouteClearance: 0.22
+  sleepSurfaceHeightRatio: 0.43
+  sleepPoseLocalOffset: {x: 0, y: 0, z: 0}
+  bedEntryDuration: 1.15
+  bedExitDuration: 0.9
+  eatLoopState: Arm_Shiba|Eat_loop
+  eatEndState: Arm_Shiba|EatDrink_end
+  sleepStartState: Arm_Shiba|Lie_belly_sleep_start
+  sleepLoopState: Arm_Shiba|Lie_belly_sleep
+  sleepEndState: Arm_Shiba|Lie_belly_sleep_end
+  heldBallWaitDistance: 1.45
+  ballPickupDistance: 0.42
+  ballReturnDistance: 1.25
+  ballActionDuration: 0.35
+  ballMouthOffset: {x: 0, y: -0.04, z: 0.16}
   animator: {fileID: 0}
   idleBreathingState: 1 type_Idle Breathing
   idlePlayingState: 1 type_Idle_Playing
@@ -2497,13 +2693,19 @@ MonoBehaviour:
   releaseState: 
   walkState: 1 type_Walk_Loop
   runState: 1 type_Run Loop
+  trotState: Arm_Shiba|Trot_F_IP
   runLeanRightState: 1 type_Run Lean Right
   runLeanLeftState: 1 type_Run Lean Left
   walkTurnRightState: 1 type_Walk_Turn_Right
   walkTurnLeftState: 1 type_Walk_Turn_Left
+  turnLeft180State: Arm_Shiba|Turn_L180_IP
+  turnRight180State: Arm_Shiba|Turn_R180_IP
+  turn180AngleThreshold: 105
+  turn180AnimationDuration: 1
   animationBlendTime: 0.2
   locomotionBlendTime: 0.28
   runAnimationSpeed: 1.3
+  trotAnimationSpeed: 1.05
   animationSpeedChangeRate: 3
   runTurnAngleThreshold: 12
   runTurnAnimationDuration: 0.35
@@ -2603,6 +2805,7 @@ MonoBehaviour:
   naturalLiftDuration: 0.45
   naturalLiftArcHeight: 0.1
   naturalLowerDuration: 0.7
+  skipNaturalLoweringForCompletionAnimation: 1
   naturalReleaseGroundClearance: 0.04
   naturalReleaseAnimationBlendDuration: 0.32
   playPantingWhileHeld: 1
@@ -2645,3 +2848,4 @@ SceneRoots:
   - {fileID: 189282620}
   - {fileID: 1711635975}
   - {fileID: 430774186}
+  - {fileID: 1834636815}

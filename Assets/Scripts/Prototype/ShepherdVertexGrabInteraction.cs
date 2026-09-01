@@ -121,6 +121,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [SerializeField, Range(0f, 0.35f)] private float naturalLiftArcHeight = 0.1f;
     [Tooltip("Seconds used to lower the dog onto the nearest floor.")]
     [SerializeField, Range(0.2f, 2f)] private float naturalLowerDuration = 0.7f;
+    [Tooltip("Put Down 또는 행동 종료 애니메이션이 재생될 때 손으로 천천히 내리는 단계를 생략합니다.")]
+    [SerializeField] private bool skipNaturalLoweringForCompletionAnimation = true;
     [Tooltip("Clearance kept between the released dog's rendered feet and the floor.")]
     [SerializeField, Range(0.01f, 0.15f)] private float naturalReleaseGroundClearance = 0.04f;
     [Tooltip("Seconds used to blend from the final lowered pose into the resumed idle animation.")]
@@ -286,6 +288,10 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     {
         ResolveReferences();
 
+        // AI 컴포넌트는 들고 있는 동안 비활성화되므로 여기서 식사/수면 키를 대신 기록합니다.
+        if (holding && shepherdAI != null)
+            shepherdAI.ProcessRoutineHotkeys();
+
         if (!holding && Time.time >= nextColliderRefreshTime)
         {
             RefreshGrabCollisionMesh();
@@ -294,6 +300,13 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
         if (useKeyboardGrab && Keyboard.current != null && Keyboard.current.gKey.wasPressedThisFrame)
         {
+            // 공을 들고 있거나 같은 프레임에 공 상호작용이 처리된 경우에는
+            // 동일한 G 입력으로 강아지까지 동시에 잡거나 내려놓지 않습니다.
+            if (!holding &&
+                (FetchBallInteraction.IsAnyBallHeldByPlayer ||
+                 FetchBallInteraction.ConsumedGrabInputThisFrame))
+                return;
+
             if (holding)
                 ReleaseShepherd();
             else if (TryFindGrabHit())
@@ -527,6 +540,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         if (!holding)
             return;
 
+        if (TryCompleteAnimatedReleaseImmediately())
+            return;
+
         if (useNaturalGrabTransitions && !loweringTransition)
         {
             BeginNaturalLowering();
@@ -534,6 +550,25 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         }
 
         CompleteReleaseShepherd();
+    }
+
+    private bool TryCompleteAnimatedReleaseImmediately()
+    {
+        if (!skipNaturalLoweringForCompletionAnimation ||
+            shepherdAI == null ||
+            !shepherdAI.WillPlayPostGrabCompletionAnimation() ||
+            !TryFindNaturalReleaseGround(out float groundHeight))
+            return false;
+
+        // 루트만 안전한 바닥 높이에 즉시 맞춘 뒤, 뼈 자세의 변화는 Put Down 또는
+        // 중단된 식사/수면의 종료 애니메이션과 기존 포즈 블렌드가 담당합니다.
+        Vector3 groundedPosition = transform.position;
+        groundedPosition.y = GetGroundedReleaseRootY(groundHeight);
+        transform.position = groundedPosition;
+        loweringTransition = false;
+        lowerGroundFound = false;
+        CompleteReleaseShepherd();
+        return true;
     }
 
     private void BeginNaturalLowering()
