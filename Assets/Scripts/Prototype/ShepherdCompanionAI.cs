@@ -51,6 +51,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         WatchingHeldBall,
         ChasingBall,
         PickingUpBall,
+        TurningToPlayerWithBall,
         ReturningBall,
         DroppingBall
     }
@@ -74,6 +75,22 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Range(5f, 55f)] private float headPitchLimit = 38f;
     [Tooltip("고개가 목표를 향해 돌아가는 속도입니다. 값이 클수록 빠르게 바라봅니다.")]
     [SerializeField, Min(0f)] private float headTurnSpeed = 7f;
+    [Tooltip("들고 있는 공의 움직임을 머리가 따라가는 전용 반응 속도입니다.")]
+    [SerializeField, Min(0f)] private float heldBallHeadTurnSpeed = 15f;
+    [Tooltip("플레이어가 든 공을 볼 때 목과 머리가 사용할 수 있는 좌우 회전 범위입니다.")]
+    [SerializeField, Range(30f, 85f)] private float heldBallHeadYawLimit = 68f;
+    [Tooltip("플레이어가 든 공을 볼 때 목과 머리가 사용할 수 있는 상하 회전 범위입니다.")]
+    [SerializeField, Range(20f, 70f)] private float heldBallHeadPitchLimit = 55f;
+    [Tooltip("Idle 애니메이션의 고개 흔들림을 상쇄하고 실제 입 방향을 공에 고정하는 강도입니다.")]
+    [SerializeField, Range(0.75f, 1f)] private float heldBallLookCorrectionStrength = 0.96f;
+    [Tooltip("공 시선 보정을 목과 머리에 나누어 적용할 때 목이 담당하는 비율입니다.")]
+    [SerializeField, Range(0.15f, 0.55f)] private float heldBallNeckCorrectionShare = 0.35f;
+    [Tooltip("이 각도 이하는 몸을 돌리지 않고 머리와 시선만 사용합니다.")]
+    [SerializeField, Range(0f, 45f)] private float smallLookAngle = 18f;
+    [Tooltip("이 각도를 넘는 방향 변화가 유지될 때만 몸 회전을 준비합니다.")]
+    [SerializeField, Range(20f, 120f)] private float largeLookAngle = 58f;
+    [Tooltip("큰 방향 변화가 이 시간 이상 유지되어야 발 애니메이션과 함께 몸을 돌립니다.")]
+    [SerializeField, Min(0.1f)] private float sustainedBodyTurnDelay = 0.65f;
     [Tooltip("비워 두면 씬에서 플레이어를 자동으로 찾습니다.")]
     [SerializeField] private Transform playerTransform;
     [Tooltip("비워 두면 Main Camera를 자동으로 사용합니다.")]
@@ -122,6 +139,14 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Min(0.5f)] private float obstacleEscapeDistance = 2.5f;
     [Tooltip("회피 후 새 목적지에 도착했다고 판단하는 거리입니다.")]
     [SerializeField, Min(0.1f)] private float obstacleRepositionStopDistance = 0.35f;
+
+    [Header("안전 복구")]
+    [SerializeField] private Vector3 mapRecoveryCenter = Vector3.zero;
+    [SerializeField] private float minimumValidWorldY = -0.65f;
+    [SerializeField, Min(1f)] private float maximumDistanceFromMapCenter = 6f;
+    [SerializeField, Min(0.05f)] private float wallPenetrationGrace = 0.3f;
+    [SerializeField, Min(1f)] private float unreachableBallRecoveryDelay = 4.5f;
+    [SerializeField, Min(0.01f)] private float fetchProgressThreshold = 0.08f;
 
     [Header("평소 생활 패턴")]
     [Tooltip("평소 가만히 있는 최소 시간입니다.")]
@@ -175,6 +200,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Min(0.5f)] private float heldBallWaitDistance = 1.45f;
     [Tooltip("던진 공에 이 거리까지 접근하면 공을 뭅니다.")]
     [SerializeField, Min(0.1f)] private float ballPickupDistance = 0.42f;
+    [Tooltip("공을 무는 애니메이션을 시작하는 거리입니다. 실제 접촉 거리보다 크게 두면 달리기에서 점프 물기로 자연스럽게 이어집니다.")]
+    [SerializeField, Min(0.1f)] private float ballBiteStartDistance = 0.82f;
+    [Tooltip("물기 점프가 공에 가까워질 때 유지할 최소 전진 속도입니다.")]
+    [SerializeField, Min(0.05f)] private float ballBiteLungeSpeed = 1.2f;
     [Tooltip("공이 벽이나 구석에 있을 때 강아지가 설 수 있는 안쪽 접근점 거리입니다.")]
     [SerializeField, Min(0.25f)] private float cornerBallApproachDistance = 0.52f;
     [Tooltip("구석 공을 입으로 가져올 수 있는 최대 거리입니다.")]
@@ -184,12 +213,22 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [Tooltip("공을 무는 동작과 내려놓는 동작에 사용하는 짧은 대기 시간입니다.")]
     [SerializeField, Min(0.1f)] private float ballBiteDuration = 1.05f;
     [SerializeField, Range(0.05f, 0.95f)] private float ballBiteAttachRatio = 0.48f;
+    [Tooltip("공을 무는 점프 애니메이션의 재생 속도입니다.")]
+    [SerializeField, Min(0.1f)] private float ballBiteAnimationSpeed = 1.4f;
+    [Tooltip("공을 완전히 문 뒤 방향 전환을 시작하기 전에 자세를 안정시키는 시간입니다.")]
+    [SerializeField, Min(0f)] private float ballPickupSettleDuration = 0.18f;
+    [Tooltip("공을 문 채 플레이어 쪽 회전을 끝낸 것으로 판단하는 각도입니다.")]
+    [SerializeField, Range(1f, 30f)] private float ballReturnTurnTolerance = 7f;
     [SerializeField, Min(0.1f)] private float ballDropDuration = 1.05f;
     [SerializeField, Range(0.05f, 0.95f)] private float ballDropReleaseRatio = 0.42f;
     [SerializeField] private string ballBiteState = "Arm_Shiba|Attack_Bite_IP";
     [SerializeField] private string ballDropState = "Arm_Shiba|EatDrink_end";
-    [Tooltip("입에 문 공의 머리뼈 기준 앞/위치 보정입니다.")]
-    [SerializeField] private Vector3 ballMouthOffset = new Vector3(0f, -0.045f, 0.13f);
+    [Tooltip("입에 문 공의 입뼈 기준 좌우/위아래/앞뒤 위치 보정입니다.")]
+    [SerializeField] private Vector3 ballMouthOffset = new Vector3(0f, -0.09f, 0.13f);
+    [Tooltip("강아지가 플레이어 손의 공을 알아볼 수 있는 최대 거리입니다.")]
+    [SerializeField, Min(0.5f)] private float heldBallNoticeDistance = 7f;
+    [Tooltip("강아지가 플레이어 손의 공을 볼 수 있는 전체 수평 시야각입니다.")]
+    [SerializeField, Range(20f, 180f)] private float heldBallFieldOfView = 120f;
 
     [Header("애니메이션")]
     [Tooltip("비워 두면 자식 오브젝트에서 Animator를 자동으로 찾습니다.")]
@@ -262,8 +301,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private Transform headBone;
     private Transform neckBone;
+    private Transform mouthBone;
+    private Transform calibratedMuzzleHeadBone;
+    private Vector3 headLocalMuzzleForward;
     private float smoothedHeadYaw;
     private float smoothedHeadPitch;
+    private float sustainedLargeLookTime;
     private Vector3 homePosition;
     private Vector3 wanderTarget;
     private float stateTimeRemaining;
@@ -325,8 +368,15 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private float fetchActionElapsed;
     private bool fetchBallAttachedDuringAction;
     private bool fetchBallReleasedDuringAction;
+    private float fetchPickupEntrySpeed;
     private Vector3 fetchApproachTarget;
     private bool fetchUsesCornerApproach;
+    private FetchBallInteraction pendingFetchBall;
+    private bool pendingFetchIsThrown;
+    private ShepherdVertexGrabInteraction grabInteraction;
+    private float invalidPositionElapsed;
+    private float fetchNoProgressElapsed;
+    private float bestFetchDistance = float.PositiveInfinity;
 
     #endregion
 
@@ -340,32 +390,61 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     public Vector3 GetBallCarryPoint()
     {
         ResolveReferences();
-        Vector3 anchorPosition = headBone != null
-            ? headBone.position
+        Transform anchor = mouthBone != null ? mouthBone : headBone;
+        Vector3 anchorPosition = anchor != null
+            ? anchor.position
             : transform.position + Vector3.up * 0.45f + transform.forward * 0.45f;
-        Vector3 muzzleDirection = transform.forward;
-        if (headBone != null && neckBone != null)
-        {
-            Vector3 anatomicalForward = headBone.position - neckBone.position;
-            if (anatomicalForward.sqrMagnitude > 0.0001f &&
-                Vector3.Dot(anatomicalForward.normalized, transform.forward) > 0.2f)
-            {
-                muzzleDirection = Vector3.Slerp(
-                    transform.forward,
-                    anatomicalForward.normalized,
-                    0.55f).normalized;
-            }
-        }
+        GetBallCarryFrame(out Vector3 muzzleRight, out Vector3 muzzleUp, out Vector3 muzzleForward);
 
         return anchorPosition +
-               transform.right * ballMouthOffset.x +
-               Vector3.up * ballMouthOffset.y +
-               muzzleDirection * ballMouthOffset.z;
+               muzzleRight * ballMouthOffset.x +
+               muzzleUp * ballMouthOffset.y +
+               muzzleForward * ballMouthOffset.z;
     }
 
     public Quaternion GetBallCarryRotation()
     {
-        return Quaternion.LookRotation(transform.right, Vector3.up);
+        ResolveReferences();
+        GetBallCarryFrame(out _, out Vector3 muzzleUp, out Vector3 muzzleForward);
+        return Quaternion.LookRotation(muzzleForward, muzzleUp);
+    }
+
+    private void EnsureMuzzleDirectionCalibrated()
+    {
+        if (headBone == null || calibratedMuzzleHeadBone == headBone)
+            return;
+
+        // The Shiba's mouth transform is a jaw pivot, not a muzzle-tip marker.
+        // Store the visual forward direction in head-local space once, then let
+        // animation-driven head rotation move that direction naturally.
+        headLocalMuzzleForward = headBone.InverseTransformDirection(transform.forward).normalized;
+        calibratedMuzzleHeadBone = headBone;
+    }
+
+    private Vector3 GetCurrentMuzzleForward()
+    {
+        EnsureMuzzleDirectionCalibrated();
+        if (headBone == null || headLocalMuzzleForward.sqrMagnitude < 0.0001f)
+            return transform.forward;
+
+        return headBone.TransformDirection(headLocalMuzzleForward).normalized;
+    }
+
+    private void GetBallCarryFrame(
+        out Vector3 muzzleRight,
+        out Vector3 muzzleUp,
+        out Vector3 muzzleForward)
+    {
+        muzzleForward = GetCurrentMuzzleForward();
+
+        muzzleRight = Vector3.ProjectOnPlane(transform.right, muzzleForward).normalized;
+        if (muzzleRight.sqrMagnitude < 0.0001f)
+            muzzleRight = transform.right;
+        // LookRotation이 기대하는 실제 위쪽 축입니다. 반대 순서로 외적하면
+        // 아래쪽 축이 만들어져 음수 Y 보정이 공을 얼굴 위로 올리게 됩니다.
+        muzzleUp = Vector3.Cross(muzzleForward, muzzleRight).normalized;
+        if (Vector3.Dot(muzzleUp, transform.up) < 0f)
+            muzzleUp = -muzzleUp;
     }
 
     public void BeginWatchingHeldBall(FetchBallInteraction ball)
@@ -373,7 +452,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (ball == null)
             return;
 
-        BeginBallPlay(ball, FetchPhase.ApproachingHeldBall);
+        if (fetchBall == ball && fetchPhase != FetchPhase.None)
+            return;
+
+        pendingFetchBall = ball;
+        pendingFetchIsThrown = false;
+        TryStartPendingFetch();
     }
 
     public void BeginChasingThrownBall(FetchBallInteraction ball)
@@ -381,7 +465,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (ball == null)
             return;
 
-        BeginBallPlay(ball, FetchPhase.ChasingBall);
+        if (fetchBall == ball && fetchPhase != FetchPhase.None)
+            return;
+
+        pendingFetchBall = ball;
+        pendingFetchIsThrown = true;
+        TryStartPendingFetch();
     }
 
     public bool WillPlayPostGrabCompletionAnimation()
@@ -468,6 +557,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         homePosition = transform.position;
         ResolveReferences();
+        grabInteraction = GetComponent<ShepherdVertexGrabInteraction>();
 
         if (animator != null)
             animator.applyRootMotion = false;
@@ -478,6 +568,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private void Update()
     {
         ResolveReferences();
+        if (TryRecoverInvalidPosition())
+            return;
+
         ProcessRoutineHotkeys();
         // 프로젝트의 활성 입력 방식인 새 Input System으로 휘파람 입력을 읽습니다.
         if (scheduledRoutinePhase == ScheduledRoutinePhase.None &&
@@ -489,6 +582,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         UpdateTurnAnimationProgress();
         playerInRange = IsPlayerInRange();
         UpdateAnimatorPlaybackSpeed();
+        TryStartPendingFetch();
 
         if (UpdateBallPlay())
         {
@@ -593,6 +687,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         float duration = GetCurrentTurnAnimationDuration();
         if (turnAnimationElapsed < duration)
             return;
+
+        if (turnTargetDirection.sqrMagnitude > 0.0001f)
+            transform.rotation = Quaternion.LookRotation(turnTargetDirection, Vector3.up);
 
         turnAnimationActive = false;
         turnAnimationUses180 = false;
@@ -757,11 +854,17 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (fetchPhase != FetchPhase.None &&
-            fetchBall != null &&
-            (fetchPhase == FetchPhase.WatchingHeldBall ||
-             fetchPhase == FetchPhase.PickingUpBall ||
-             fetchPhase == FetchPhase.DroppingBall))
+        bool trackingPlayerHeldBall = fetchBall != null &&
+                                      fetchBall.IsHeldByPlayer &&
+                                      (fetchPhase == FetchPhase.ApproachingHeldBall ||
+                                       fetchPhase == FetchPhase.WatchingHeldBall);
+        if (trackingPlayerHeldBall)
+            UpdateHeadLookAt(
+                fetchBall.WorldPosition,
+                heldBallHeadYawLimit,
+                heldBallHeadPitchLimit,
+                true);
+        else if (fetchPhase == FetchPhase.DroppingBall && fetchBall != null)
             UpdateHeadLookAt(fetchBall.WorldPosition);
         else if (playerInRange && CanLookAtPlayerWithoutFightingMovement())
             UpdateHeadLook();
@@ -770,6 +873,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             smoothedHeadYaw = 0f;
             smoothedHeadPitch = 0f;
         }
+
+        // Animator와 고개 보정이 모두 끝난 최종 입 위치를 사용합니다.
+        // 공 쪽 LateUpdate에서 갱신하면 실행 순서에 따라 한 프레임 늦거나 옆으로 밀릴 수 있습니다.
     }
 
     #endregion
@@ -792,6 +898,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         if (neckBone == null)
             neckBone = FindBone("DEF-spine.010") ?? FindBone("neck");
+
+        if (mouthBone == null)
+            mouthBone = FindBone("mouth") ?? FindBone("DEF-jaw") ?? FindBone("jaw");
+
+        EnsureMuzzleDirectionCalibrated();
 
         if (foodBowl == null)
         {
@@ -1493,6 +1604,94 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     #region 공놀이
 
+    private bool IsFetchDeferredByRoutine()
+    {
+        return scheduledRoutinePhase == ScheduledRoutinePhase.Eating ||
+               scheduledRoutinePhase == ScheduledRoutinePhase.FinishingMeal ||
+               (scheduledRoutinePhase >= ScheduledRoutinePhase.EnteringBed &&
+                scheduledRoutinePhase <= ScheduledRoutinePhase.LeavingBed);
+    }
+
+    private void TryStartPendingFetch()
+    {
+        if (pendingFetchBall == null ||
+            fetchPhase != FetchPhase.None ||
+            IsFetchDeferredByRoutine())
+            return;
+
+        FetchBallInteraction ball = pendingFetchBall;
+        if (ball.IsHeldByPlayer)
+        {
+            if (!CanSeeHeldBall(ball))
+                return;
+
+            pendingFetchBall = null;
+            pendingFetchIsThrown = false;
+            BeginBallPlay(ball, FetchPhase.ApproachingHeldBall);
+            return;
+        }
+
+        if (pendingFetchIsThrown && ball.WasThrown && !ball.IsCarriedByDog)
+        {
+            pendingFetchBall = null;
+            pendingFetchIsThrown = false;
+            BeginBallPlay(ball, FetchPhase.ChasingBall);
+            return;
+        }
+
+        pendingFetchBall = null;
+        pendingFetchIsThrown = false;
+    }
+
+    private bool CanSeeHeldBall(FetchBallInteraction ball)
+    {
+        if (ball == null || !ball.IsHeldByPlayer)
+            return false;
+
+        ResolveReferences();
+        Vector3 sightOrigin = headBone != null
+            ? headBone.position
+            : transform.position + Vector3.up * 0.45f;
+        Vector3 toBall = ball.WorldPosition - sightOrigin;
+        float distance = toBall.magnitude;
+        if (distance < 0.001f || distance > heldBallNoticeDistance)
+            return false;
+
+        Vector3 planarDirection = Vector3.ProjectOnPlane(toBall, Vector3.up);
+        if (planarDirection.sqrMagnitude > 0.0001f &&
+            Vector3.Angle(transform.forward, planarDirection) > heldBallFieldOfView * 0.5f)
+            return false;
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            sightOrigin,
+            toBall / distance,
+            distance + 0.08f,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider candidate = hits[i].collider;
+            if (ball.OwnsCollider(candidate))
+                return true;
+            if (IsOwnCollider(candidate) || IsPlayerCollider(candidate))
+                continue;
+            return false;
+        }
+
+        // 작은 공의 콜라이더를 레이가 스치더라도, 중간에 가리는 물체가 없으면 보인 것으로 처리합니다.
+        return true;
+    }
+
+    private bool IsPlayerCollider(Collider candidate)
+    {
+        if (candidate == null || playerTransform == null)
+            return false;
+
+        Transform candidateTransform = candidate.transform;
+        return candidateTransform == playerTransform || candidateTransform.IsChildOf(playerTransform);
+    }
+
     private void BeginBallPlay(FetchBallInteraction ball, FetchPhase phase)
     {
         ResolveReferences();
@@ -1522,6 +1721,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         fetchBallReleasedDuringAction = false;
         fetchUsesCornerApproach = false;
         fetchApproachTarget = ball.WorldPosition;
+        ResetFetchProgressTracking();
         currentAnimation = null;
         state = BrainState.Run;
         wanderTarget = ball.WorldPosition;
@@ -1544,13 +1744,16 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         {
             fetchPhase = FetchPhase.ApproachingHeldBall;
             fetchActionElapsed = 0f;
+            turnAnimationActive = false;
+            turnAnimationElapsed = 0f;
         }
         else if (fetchBall.IsCarriedByDog &&
                  fetchPhase != FetchPhase.PickingUpBall &&
+                 fetchPhase != FetchPhase.TurningToPlayerWithBall &&
                  fetchPhase != FetchPhase.ReturningBall &&
                  fetchPhase != FetchPhase.DroppingBall)
         {
-            fetchPhase = FetchPhase.ReturningBall;
+            fetchPhase = FetchPhase.TurningToPlayerWithBall;
             fetchActionElapsed = 0f;
         }
 
@@ -1566,13 +1769,16 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                     return true;
                 }
 
+                if (WaitForFetchStandUp())
+                    return true;
+
                 if (MoveTowardFetchTarget(
                         GetPlayerPosition(),
                         heldBallWaitDistance,
                         true))
                 {
                     fetchPhase = FetchPhase.WatchingHeldBall;
-                    UpdateStationaryFetchPose(fetchBall.WorldPosition);
+                    UpdateHeldBallWatchPose();
                 }
                 return true;
 
@@ -1595,7 +1801,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                     return true;
                 }
 
-                UpdateStationaryFetchPose(fetchBall.WorldPosition);
+                UpdateHeldBallWatchPose();
                 return true;
 
             case FetchPhase.ChasingBall:
@@ -1605,18 +1811,24 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                     return true;
                 }
 
+                if (WaitForFetchStandUp())
+                    return true;
+
                 UpdateFetchBallApproachTarget();
                 float ballDistance = GetPlanarDistance(fetchBall.WorldPosition, transform.position);
+                if (UpdateUnreachableBallRecovery(ballDistance))
+                    return true;
+
+                float biteStartDistance = Mathf.Max(ballPickupDistance, ballBiteStartDistance);
                 float pickupReach = fetchUsesCornerApproach
-                    ? Mathf.Max(ballPickupDistance, cornerBallPickupReach)
-                    : ballPickupDistance;
+                    ? Mathf.Max(biteStartDistance, cornerBallPickupReach)
+                    : biteStartDistance;
                 bool reachedApproachPoint = GetPlanarDistance(
                     fetchApproachTarget,
                     transform.position) <= 0.12f;
-                bool canReachBall = ballDistance <= ballPickupDistance ||
-                                    (fetchUsesCornerApproach &&
-                                     reachedApproachPoint &&
-                                     ballDistance <= pickupReach);
+                bool canReachBall = fetchUsesCornerApproach
+                    ? reachedApproachPoint && ballDistance <= pickupReach
+                    : ballDistance <= biteStartDistance;
                 if (canReachBall && fetchBall.CanBePickedUpByDog)
                 {
                     BeginBallPickupAction();
@@ -1625,7 +1837,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
                 MoveTowardFetchTarget(
                     fetchApproachTarget,
-                    fetchUsesCornerApproach ? 0.08f : ballPickupDistance,
+                    fetchUsesCornerApproach ? 0.08f : biteStartDistance,
                     true);
                 return true;
 
@@ -1637,8 +1849,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                 }
 
                 float actionPickupReach = fetchUsesCornerApproach
-                    ? Mathf.Max(ballPickupDistance, cornerBallPickupReach)
-                    : ballPickupDistance * 1.8f;
+                    ? Mathf.Max(ballBiteStartDistance, cornerBallPickupReach)
+                    : Mathf.Max(ballPickupDistance, ballBiteStartDistance) * 1.8f;
                 if (!fetchBallAttachedDuringAction &&
                     GetPlanarDistance(fetchBall.WorldPosition, transform.position) >
                     actionPickupReach)
@@ -1648,8 +1860,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                 }
 
                 fetchActionElapsed += Time.deltaTime;
-                MaintainFetchActionPose(fetchBall.WorldPosition);
-                float attachTime = Mathf.Max(0.05f, ballBiteDuration * ballBiteAttachRatio);
+                float biteDuration = Mathf.Max(
+                    ballBiteDuration,
+                    GetAnimationClipLength(ballBiteState) /
+                    Mathf.Max(0.1f, ballBiteAnimationSpeed));
+                float attachTime = Mathf.Max(0.05f, biteDuration * ballBiteAttachRatio);
+                MaintainFetchPickupPose(fetchBall.WorldPosition, attachTime);
                 if (!fetchBallAttachedDuringAction && fetchActionElapsed >= attachTime)
                 {
                     if (fetchBall.TryAttachToDog(this))
@@ -1663,19 +1879,28 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                     }
                 }
 
-                if (fetchActionElapsed >= Mathf.Max(attachTime, ballBiteDuration))
+                if (fetchActionElapsed >= Mathf.Max(attachTime, biteDuration))
                 {
                     if (fetchBallAttachedDuringAction)
                     {
-                        fetchPhase = FetchPhase.ReturningBall;
+                        fetchPhase = FetchPhase.TurningToPlayerWithBall;
                         fetchActionElapsed = 0f;
-                        currentAnimation = null;
                     }
                     else
                     {
                         fetchPhase = FetchPhase.ChasingBall;
                     }
                 }
+                return true;
+
+            case FetchPhase.TurningToPlayerWithBall:
+                if (!fetchBall.IsCarriedByDog)
+                {
+                    EndBallPlay();
+                    return true;
+                }
+
+                UpdateFetchReturnTurn();
                 return true;
 
             case FetchPhase.ReturningBall:
@@ -1718,6 +1943,68 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         return false;
     }
 
+    private bool WaitForFetchStandUp()
+    {
+        if (!FinishRestPoseBeforeMovement())
+            return false;
+
+        state = BrainState.Idle;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        turnAnimationActive = false;
+        turnAnimationElapsed = 0f;
+        return true;
+    }
+
+    private void UpdateFetchReturnTurn()
+    {
+        state = BrainState.Idle;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+        fetchActionElapsed += Time.deltaTime;
+
+        // Keep the completed bite pose briefly so the dog visibly secures the ball
+        // before a separate foot-planted turn begins.
+        if (fetchActionElapsed < ballPickupSettleDuration)
+            return;
+
+        Vector3 playerDirection = GetPlayerPosition() - transform.position;
+        playerDirection.y = 0f;
+        if (playerDirection.sqrMagnitude < 0.0001f)
+        {
+            BeginFetchReturnMovement();
+            return;
+        }
+
+        playerDirection.Normalize();
+        float signedAngle = Vector3.SignedAngle(
+            transform.forward,
+            playerDirection,
+            Vector3.up);
+
+        if (!turnAnimationActive && Mathf.Abs(signedAngle) <= ballReturnTurnTolerance)
+        {
+            BeginFetchReturnMovement();
+            return;
+        }
+
+        if (!turnAnimationActive)
+        {
+            BeginDirectionTurn(playerDirection, signedAngle, false);
+            turnAnimationResumeState = idleBreathingState;
+        }
+
+        if (turnAnimationActive)
+            TurnBodyToward(playerDirection);
+    }
+
+    private void BeginFetchReturnMovement()
+    {
+        fetchPhase = FetchPhase.ReturningBall;
+        fetchActionElapsed = 0f;
+        currentAnimation = null;
+    }
+
     private bool MoveTowardFetchTarget(Vector3 targetPosition, float stopDistance, bool run)
     {
         Vector3 direction = targetPosition - transform.position;
@@ -1734,7 +2021,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (!turnAnimationActive)
             PlayAnimation(run ? runState : trotState);
         TurnBodyToward(direction.normalized);
-        MoveForward(run ? runSpeed : trotSpeed);
+        float remainingDistance = Mathf.Max(0f, direction.magnitude - stopDistance);
+        MoveForward(run ? runSpeed : trotSpeed, remainingDistance);
         return false;
     }
 
@@ -1752,11 +2040,26 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             TurnBodyToward(direction.normalized);
     }
 
+    private void UpdateHeldBallWatchPose()
+    {
+        state = BrainState.Idle;
+        movementUsesRunAnimation = false;
+        currentMoveSpeed = 0f;
+
+        // 공을 든 플레이어 앞에 도착한 뒤에는 발이 고정된 Idle 상태를 유지합니다.
+        // 남아 있던 회전 애니메이션과 루트 회전을 끝내고, 공 추적은 LateUpdate의
+        // 목/머리 회전에만 맡겨 제자리에서 발이 미끄러지는 모습을 방지합니다.
+        turnAnimationActive = false;
+        turnAnimationElapsed = 0f;
+        UpdateStationaryIdleAnimation();
+    }
+
     private void BeginBallPickupAction()
     {
         fetchPhase = FetchPhase.PickingUpBall;
         fetchActionElapsed = 0f;
         fetchBallAttachedDuringAction = false;
+        fetchPickupEntrySpeed = Mathf.Max(currentMoveSpeed, ballBiteLungeSpeed);
         currentMoveSpeed = 0f;
         movementUsesRunAnimation = false;
         turnAnimationActive = false;
@@ -1770,6 +2073,33 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         movementUsesRunAnimation = false;
         currentMoveSpeed = 0f;
         FaceFetchTargetImmediately(lookTarget);
+    }
+
+    private void MaintainFetchPickupPose(Vector3 ballPosition, float attachTime)
+    {
+        MaintainFetchActionPose(ballPosition);
+        if (fetchBallAttachedDuringAction)
+            return;
+
+        // 물기 애니메이션이 시작된 자리에서 굳어 있지 않도록, 실제 입 위치가
+        // 공에 닿을 때까지만 몸통을 수평으로 짧게 전진시킵니다.
+        Vector3 mouthToBall = ballPosition - GetBallCarryPoint();
+        mouthToBall.y = 0f;
+        float forwardGap = Vector3.Dot(mouthToBall, transform.forward);
+        if (forwardGap <= 0.002f)
+            return;
+
+        float progress = Mathf.Clamp01(fetchActionElapsed / Mathf.Max(0.05f, attachTime));
+        float easedProgress = progress * progress * (3f - 2f * progress);
+        // 추격 중 속도를 물기 점프 초반까지 이어받고 접촉 직전에만 감속합니다.
+        // 공 앞에서 완전히 정지한 뒤 갑자기 뛰는 인상을 없애기 위한 이동 곡선입니다.
+        float lungeSpeed = Mathf.Lerp(
+            Mathf.Max(fetchPickupEntrySpeed, ballBiteLungeSpeed),
+            ballBiteLungeSpeed * 0.55f,
+            easedProgress);
+        float maxStep = lungeSpeed * Time.deltaTime;
+        Vector3 desiredMove = transform.forward * Mathf.Min(forwardGap, maxStep);
+        transform.position += GetCollisionLimitedMove(desiredMove);
     }
 
     private void FaceFetchTargetImmediately(Vector3 targetPosition)
@@ -1925,6 +2255,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         turnAnimationElapsed = 0f;
         movementUsesRunAnimation = false;
         currentMoveSpeed = 0f;
+        ResetFetchProgressTracking();
         currentAnimation = null;
         EnterAmbientState(false);
     }
@@ -1983,11 +2314,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             followUsesTrotAnimation = false;
             followAnimationModeInitialized = true;
             movementUsesRunAnimation = false;
-            turnAnimationActive = false;
             currentMoveSpeed = 0f;
-            UpdateStationaryIdleAnimation();
+            UpdateStationaryPlayerFacing(direction);
             return;
         }
+
+        sustainedLargeLookTime = 0f;
 
         if (FinishRestPoseBeforeMovement())
         {
@@ -2060,6 +2392,56 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             PlayAnimation(locomotionState);
         TurnBodyToward(direction.normalized);
         MoveForward(speed);
+    }
+
+    private void UpdateStationaryPlayerFacing(Vector3 direction)
+    {
+        if (direction.sqrMagnitude < 0.0001f)
+        {
+            sustainedLargeLookTime = 0f;
+            turnAnimationActive = false;
+            UpdateStationaryIdleAnimation();
+            return;
+        }
+
+        float signedAngle = Vector3.SignedAngle(
+            transform.forward,
+            direction.normalized,
+            Vector3.up);
+        float absoluteAngle = Mathf.Abs(signedAngle);
+
+        if (turnAnimationActive)
+        {
+            TurnBodyToward(direction.normalized);
+            return;
+        }
+
+        // 작은 각도에서는 시선/머리만, 중간 각도에서는 머리가 먼저 반응합니다.
+        // 두 경우 모두 뿌리 회전은 건드리지 않고 LateUpdate의 머리 추적에 맡깁니다.
+        if (absoluteAngle <= smallLookAngle)
+        {
+            sustainedLargeLookTime = 0f;
+            UpdateStationaryIdleAnimation();
+            return;
+        }
+
+        if (absoluteAngle <= largeLookAngle)
+        {
+            sustainedLargeLookTime = 0f;
+            UpdateStationaryIdleAnimation();
+            return;
+        }
+
+        sustainedLargeLookTime += Time.deltaTime;
+        if (sustainedLargeLookTime < sustainedBodyTurnDelay)
+        {
+            UpdateStationaryIdleAnimation();
+            return;
+        }
+
+        BeginDirectionTurn(direction.normalized, signedAngle, false);
+        turnAnimationResumeState = idleBreathingState;
+        sustainedLargeLookTime = 0f;
     }
 
     #endregion
@@ -2299,7 +2681,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         return walkState;
     }
 
-    private void MoveForward(float speed)
+    private void MoveForward(float speed, float obstacleProbeLimit = float.PositiveInfinity)
     {
         if (turnAnimationActive)
         {
@@ -2326,7 +2708,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return;
 
         // 이동 직전에 몸통 크기만큼 캡슐을 미리 검사하여 벽 안으로 들어가는 것을 막습니다.
-        if (IsObstacleAhead(transform.forward, obstacleCheckDistance + movementDistance))
+        float obstacleProbeDistance = Mathf.Min(
+            obstacleCheckDistance + movementDistance,
+            Mathf.Max(movementDistance, obstacleProbeLimit));
+        if (IsObstacleAhead(transform.forward, obstacleProbeDistance))
         {
             bool currentAvoidanceBlocked = obstacleAvoidanceDirection.sqrMagnitude > 0.0001f &&
                                             IsObstacleAhead(
@@ -2369,6 +2754,26 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         }
 
         transform.position += transform.forward * movementDistance;
+    }
+
+    private Vector3 GetCollisionLimitedMove(Vector3 desiredMove)
+    {
+        float distance = desiredMove.magnitude;
+        if (distance <= 0.0001f)
+            return Vector3.zero;
+
+        Vector3 direction = desiredMove / distance;
+        Vector3 origin = transform.position + Vector3.up * obstacleCheckHeight;
+        if (!TryGetNearestExternalSphereCastHit(
+                origin,
+                obstacleCheckRadius,
+                direction,
+                distance,
+                out RaycastHit hit))
+            return desiredMove;
+
+        float safeDistance = Mathf.Max(0f, hit.distance - 0.02f);
+        return direction * Mathf.Min(distance, safeDistance);
     }
 
     private bool IsObstacleAhead(Vector3 direction, float distance)
@@ -2526,6 +2931,15 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void UpdateHeadLookAt(Vector3 targetPosition)
     {
+        UpdateHeadLookAt(targetPosition, headYawLimit, headPitchLimit, false);
+    }
+
+    private void UpdateHeadLookAt(
+        Vector3 targetPosition,
+        float yawLimit,
+        float pitchLimit,
+        bool stabilizeMuzzle)
+    {
         if (headBone == null && neckBone == null)
             return;
 
@@ -2541,14 +2955,28 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         float horizontalDistance = Mathf.Max(0.001f, targetDirection.magnitude);
         targetDirection.Normalize();
         float signedYaw = Vector3.SignedAngle(transform.forward, targetDirection, Vector3.up);
-        float limitedYaw = Mathf.Clamp(signedYaw, -headYawLimit, headYawLimit);
-        float blend = 1f - Mathf.Exp(-headTurnSpeed * Time.deltaTime);
+        float limitedYaw = Mathf.Clamp(signedYaw, -yawLimit, yawLimit);
+        float effectiveHeadTurnSpeed = stabilizeMuzzle
+            ? heldBallHeadTurnSpeed
+            : headTurnSpeed;
+        float blend = 1f - Mathf.Exp(-effectiveHeadTurnSpeed * Time.deltaTime);
         smoothedHeadYaw = Mathf.LerpAngle(smoothedHeadYaw, limitedYaw, blend);
         float pitch = Mathf.Atan2(
             fullTargetDirection.y,
             horizontalDistance) * Mathf.Rad2Deg;
-        float limitedPitch = Mathf.Clamp(pitch, -headPitchLimit, headPitchLimit);
+        float limitedPitch = Mathf.Clamp(pitch, -pitchLimit, pitchLimit);
         smoothedHeadPitch = Mathf.LerpAngle(smoothedHeadPitch, limitedPitch, blend);
+
+        if (stabilizeMuzzle && headBone != null && mouthBone != null)
+        {
+            Vector3 clampedPlanarDirection =
+                Quaternion.AngleAxis(smoothedHeadYaw, Vector3.up) * transform.forward;
+            Vector3 pitchAxis = Vector3.Cross(Vector3.up, clampedPlanarDirection).normalized;
+            Vector3 stableLookDirection =
+                Quaternion.AngleAxis(-smoothedHeadPitch, pitchAxis) * clampedPlanarDirection;
+            ApplyStableMuzzleLook(stableLookDirection.normalized);
+            return;
+        }
 
         // 뼈의 월드 회전을 목표 회전으로 직접 덮어쓰면 얼굴 정면축이 +Z가 아닌 리그에서
         // 애니메이터 포즈와 서로 반대 방향으로 보정되어 좌우 플립이 발생합니다.
@@ -2577,6 +3005,39 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         }
     }
 
+    private void ApplyStableMuzzleLook(Vector3 desiredLookDirection)
+    {
+        Vector3 currentMuzzleDirection = GetCurrentMuzzleForward();
+        if (currentMuzzleDirection.sqrMagnitude < 0.0001f ||
+            desiredLookDirection.sqrMagnitude < 0.0001f)
+            return;
+
+        Quaternion fullCorrection = Quaternion.FromToRotation(
+            currentMuzzleDirection,
+            desiredLookDirection);
+
+        if (neckBone != null)
+        {
+            Quaternion neckCorrection = Quaternion.Slerp(
+                Quaternion.identity,
+                fullCorrection,
+                heldBallNeckCorrectionShare * heldBallLookCorrectionStrength);
+            neckBone.rotation = neckCorrection * neckBone.rotation;
+        }
+
+        currentMuzzleDirection = GetCurrentMuzzleForward();
+        if (currentMuzzleDirection.sqrMagnitude < 0.0001f)
+            return;
+
+        Quaternion headCorrection = Quaternion.FromToRotation(
+            currentMuzzleDirection,
+            desiredLookDirection);
+        headBone.rotation = Quaternion.Slerp(
+            Quaternion.identity,
+            headCorrection,
+            heldBallLookCorrectionStrength) * headBone.rotation;
+    }
+
     private bool CanLookAtPlayerWithoutFightingMovement()
     {
         if (fetchPhase != FetchPhase.None)
@@ -2602,6 +3063,177 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     #endregion
 
     #region 바닥 유지와 애니메이션
+
+    private bool TryRecoverInvalidPosition()
+    {
+        if (grabInteraction == null)
+            grabInteraction = GetComponent<ShepherdVertexGrabInteraction>();
+        if (grabInteraction != null && grabInteraction.IsHolding)
+        {
+            invalidPositionElapsed = 0f;
+            return false;
+        }
+
+        Vector3 planarOffset = transform.position - mapRecoveryCenter;
+        planarOffset.y = 0f;
+        bool immediatelyInvalid = transform.position.y < minimumValidWorldY ||
+                                  planarOffset.sqrMagnitude >
+                                  maximumDistanceFromMapCenter * maximumDistanceFromMapCenter;
+        bool insideBlockingGeometry = !IsUsingBedPose() && IsInsideBlockingGeometry();
+
+        if (!immediatelyInvalid && !insideBlockingGeometry)
+        {
+            invalidPositionElapsed = 0f;
+            return false;
+        }
+
+        invalidPositionElapsed += Time.deltaTime;
+        if (!immediatelyInvalid && invalidPositionElapsed < wallPenetrationGrace)
+            return false;
+
+        RecoverDogToMapCenter();
+        return true;
+    }
+
+    private bool IsUsingBedPose()
+    {
+        return scheduledRoutinePhase >= ScheduledRoutinePhase.EnteringBed &&
+               scheduledRoutinePhase <= ScheduledRoutinePhase.LeavingBed;
+    }
+
+    private bool IsInsideBlockingGeometry()
+    {
+        Vector3 probeCenter = transform.position + Vector3.up * obstacleCheckHeight;
+        float probeRadius = Mathf.Max(0.08f, obstacleCheckRadius * 0.72f);
+        Collider[] overlaps = Physics.OverlapSphere(
+            probeCenter,
+            probeRadius,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+
+        for (int i = 0; i < overlaps.Length; i++)
+        {
+            Collider candidate = overlaps[i];
+            if (IsOwnCollider(candidate) ||
+                IsPlayerCollider(candidate) ||
+                (fetchBall != null && fetchBall.OwnsCollider(candidate)))
+                continue;
+
+            Vector3 closestPoint = candidate.ClosestPoint(probeCenter);
+            if ((closestPoint - probeCenter).sqrMagnitude <= 0.0001f)
+                return true;
+        }
+
+        return false;
+    }
+
+    private void RecoverDogToMapCenter()
+    {
+        FetchBallInteraction carriedBall =
+            fetchBall != null && fetchBall.IsCarriedByDog ? fetchBall : null;
+
+        if (fetchPhase != FetchPhase.None)
+            EndBallPlay();
+
+        pendingFetchBall = null;
+        pendingFetchIsThrown = false;
+        scheduledRoutinePhase = ScheduledRoutinePhase.None;
+        scheduledRoutineElapsed = 0f;
+        mealRequested = false;
+        sleepRequested = false;
+        routineInterruptedByGrab = false;
+        whistleResponseActive = false;
+        whistleIdleTimeRemaining = 0f;
+        obstacleAvoidanceDirection = Vector3.zero;
+        obstacleAvoidanceTimeRemaining = 0f;
+        obstacleIdleTimeRemaining = 0f;
+        obstacleRepositionActive = false;
+        turnAnimationActive = false;
+        turnAnimationElapsed = 0f;
+        currentMoveSpeed = 0f;
+        sustainedLargeLookTime = 0f;
+        invalidPositionElapsed = 0f;
+
+        Vector3 recoveryPosition = FindDogRecoveryPosition(mapRecoveryCenter);
+        transform.SetPositionAndRotation(recoveryPosition, Quaternion.identity);
+        homePosition = recoveryPosition;
+        currentAnimation = null;
+        ResetActiveIdleSequence();
+        EnterAmbientState(true);
+
+        if (carriedBall != null)
+            carriedBall.RecoverToFloor(mapRecoveryCenter + Vector3.forward * 0.75f, false);
+    }
+
+    private Vector3 FindDogRecoveryPosition(Vector3 preferredPosition)
+    {
+        Vector3[] offsets =
+        {
+            Vector3.zero,
+            Vector3.forward * 0.75f,
+            Vector3.right * 0.75f,
+            Vector3.back * 0.75f,
+            Vector3.left * 0.75f
+        };
+
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            Vector3 candidate = preferredPosition + offsets[i];
+            Vector3 rayOrigin = candidate + Vector3.up * 3f;
+            RaycastHit[] hits = Physics.RaycastAll(
+                rayOrigin,
+                Vector3.down,
+                6f,
+                Physics.DefaultRaycastLayers,
+                QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            for (int hitIndex = 0; hitIndex < hits.Length; hitIndex++)
+            {
+                RaycastHit hit = hits[hitIndex];
+                if (IsOwnCollider(hit.collider) || Vector3.Dot(hit.normal, Vector3.up) < 0.65f)
+                    continue;
+
+                Vector3 rootPosition = hit.point + Vector3.up * groundOffset;
+                Vector3 bodyProbe = rootPosition + Vector3.up * obstacleCheckHeight;
+                if (!Physics.CheckSphere(
+                        bodyProbe,
+                        obstacleCheckRadius * 0.8f,
+                        Physics.DefaultRaycastLayers,
+                        QueryTriggerInteraction.Ignore))
+                    return rootPosition;
+            }
+        }
+
+        return new Vector3(preferredPosition.x, groundOffset, preferredPosition.z);
+    }
+
+    private bool UpdateUnreachableBallRecovery(float ballDistance)
+    {
+        if (ballDistance + fetchProgressThreshold < bestFetchDistance)
+        {
+            bestFetchDistance = ballDistance;
+            fetchNoProgressElapsed = 0f;
+            return false;
+        }
+
+        fetchNoProgressElapsed += Time.deltaTime;
+        if (fetchNoProgressElapsed < unreachableBallRecoveryDelay)
+            return false;
+
+        fetchBall.RecoverToFloor(mapRecoveryCenter, false);
+        fetchApproachTarget = fetchBall.WorldPosition;
+        fetchUsesCornerApproach = false;
+        currentMoveSpeed = 0f;
+        ResetFetchProgressTracking();
+        return true;
+    }
+
+    private void ResetFetchProgressTracking()
+    {
+        fetchNoProgressElapsed = 0f;
+        bestFetchDistance = float.PositiveInfinity;
+    }
 
     private void KeepOnGround()
     {
@@ -2649,9 +3281,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (HasIdleVariations() && !IsConfiguredIdleState(stateName))
             ResetActiveIdleSequence();
 
-        targetAnimatorSpeed = stateName == trotState
-            ? trotAnimationSpeed
-            : IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
+        targetAnimatorSpeed = stateName == ballBiteState
+            ? ballBiteAnimationSpeed
+            : stateName == trotState
+                ? trotAnimationSpeed
+                : IsRunAnimationState(stateName) ? runAnimationSpeed : 1f;
 
         if (currentAnimation == stateName && IsAnimatorInRequestedState(stateName))
             return;

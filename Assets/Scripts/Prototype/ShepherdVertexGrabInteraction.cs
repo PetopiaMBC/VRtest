@@ -273,6 +273,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private bool aiWasEnabled;
     private bool skinnedRendererWasEnabled;
 
+    public bool IsHolding => holding;
+
     #endregion
 
     #region Unity 생명주기

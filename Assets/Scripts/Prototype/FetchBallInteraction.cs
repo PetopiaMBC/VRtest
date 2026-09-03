@@ -7,6 +7,7 @@ using UnityEngine.InputSystem;
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody))]
+[DefaultExecutionOrder(1000)]
 public sealed class FetchBallInteraction : MonoBehaviour
 {
     [Header("Player Interaction")]
@@ -28,11 +29,20 @@ public sealed class FetchBallInteraction : MonoBehaviour
     [SerializeField] private Camera playerCamera;
     [SerializeField] private ShepherdCompanionAI companionAI;
 
+    [Header("Recovery")]
+    [Tooltip("공이 이 높이보다 아래로 떨어지면 맵 중앙의 안전한 바닥으로 되돌립니다.")]
+    [SerializeField] private float minimumValidWorldY = -0.75f;
+    [Tooltip("맵 중앙에서 이 거리보다 멀어진 공을 이탈한 것으로 판단합니다.")]
+    [SerializeField, Min(1f)] private float maximumDistanceFromMapCenter = 7f;
+    [SerializeField] private Vector3 mapCenter = Vector3.zero;
+    [SerializeField, Min(0.5f)] private float recoveryFloorProbeHeight = 3f;
+
     private static FetchBallInteraction playerHeldBall;
     private static int lastConsumedInteractionFrame = -1;
 
     private Rigidbody ballBody;
     private Collider[] ballColliders;
+    private Transform originalParent;
     private bool heldByPlayer;
     private bool carriedByDog;
     private float lastThrowTime = float.NegativeInfinity;
@@ -61,6 +71,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
     private void Awake()
     {
         gameObject.isStatic = false;
+        originalParent = transform.parent;
         ballBody = GetComponent<Rigidbody>();
         ballColliders = GetComponentsInChildren<Collider>(true);
         ConfigureFreePhysics();
@@ -70,6 +81,12 @@ public sealed class FetchBallInteraction : MonoBehaviour
     private void Update()
     {
         ResolveReferences();
+
+        if (!heldByPlayer && !carriedByDog && IsOutsidePlayableArea())
+        {
+            RecoverToFloor(mapCenter);
+            return;
+        }
 
         if (heldByPlayer)
             UpdatePlayerHeldPose();
@@ -100,10 +117,11 @@ public sealed class FetchBallInteraction : MonoBehaviour
             return;
         }
 
+        // Animator와 강아지 AI의 LateUpdate가 모두 끝난 뒤 최종 입 자세를 따라갑니다.
+        // Rigidbody 보간에 맡기지 않고 렌더 프레임마다 정확한 위치를 적용해야
+        // 회전 중 공이 한 프레임씩 뒤처져 보이지 않습니다.
         if (carriedByDog && companionAI != null)
-            transform.SetPositionAndRotation(
-                companionAI.GetBallCarryPoint(),
-                companionAI.GetBallCarryRotation());
+            SyncDogCarryPose(companionAI);
     }
 
     private void OnDisable()
@@ -157,13 +175,16 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
         heldByPlayer = true;
         carriedByDog = false;
+        RestoreOriginalParent();
         playerHeldBall = this;
         heldVelocity = Vector3.zero;
         SetCollidersEnabled(true);
-        ballBody.isKinematic = true;
-        ballBody.useGravity = false;
         ballBody.linearVelocity = Vector3.zero;
         ballBody.angularVelocity = Vector3.zero;
+        ballBody.useGravity = false;
+        ballBody.interpolation = RigidbodyInterpolation.None;
+        ballBody.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        ballBody.isKinematic = true;
         UpdatePlayerHeldPose(true);
 
         if (companionAI != null)
@@ -178,13 +199,14 @@ public sealed class FetchBallInteraction : MonoBehaviour
         Vector3 targetPosition = playerCamera.transform.position +
                                  playerCamera.transform.forward * holdDistance +
                                  playerCamera.transform.up * holdVerticalOffset;
-        transform.position = snap
+        Vector3 desiredPosition = snap
             ? targetPosition
             : Vector3.SmoothDamp(
                 transform.position,
                 targetPosition,
                 ref heldVelocity,
                 1f / Mathf.Max(1f, heldFollowSpeed));
+        transform.position = GetCollisionSafePosition(transform.position, desiredPosition);
         transform.rotation = Quaternion.RotateTowards(
             transform.rotation,
             playerCamera.transform.rotation,
@@ -219,14 +241,15 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
         companionAI = dog;
         carriedByDog = true;
-        ballBody.isKinematic = true;
-        ballBody.useGravity = false;
         ballBody.linearVelocity = Vector3.zero;
         ballBody.angularVelocity = Vector3.zero;
+        ballBody.useGravity = false;
+        ballBody.interpolation = RigidbodyInterpolation.None;
+        ballBody.collisionDetectionMode = CollisionDetectionMode.Discrete;
+        ballBody.isKinematic = true;
         SetCollidersEnabled(false);
-        transform.SetPositionAndRotation(
-            companionAI.GetBallCarryPoint(),
-            companionAI.GetBallCarryRotation());
+        RestoreOriginalParent();
+        SyncDogCarryPose(dog);
         return true;
     }
 
@@ -239,11 +262,162 @@ public sealed class FetchBallInteraction : MonoBehaviour
             return;
 
         carriedByDog = false;
+        RestoreOriginalParent();
         transform.position = worldPosition;
         ConfigureFreePhysics();
         ballBody.linearVelocity = releaseVelocity;
         ballBody.angularVelocity = releaseAngularVelocity;
         lastThrowTime = float.NegativeInfinity;
+    }
+
+    public void SyncDogCarryPose(ShepherdCompanionAI dog)
+    {
+        if (!carriedByDog || dog == null || dog != companionAI)
+            return;
+
+        transform.SetPositionAndRotation(
+            dog.GetBallCarryPoint(),
+            dog.GetBallCarryRotation());
+    }
+
+    public void RecoverToFloor(Vector3 preferredPosition)
+    {
+        RecoverToFloor(preferredPosition, true);
+    }
+
+    public void RecoverToFloor(Vector3 preferredPosition, bool notifyDog)
+    {
+        if (heldByPlayer)
+            return;
+
+        carriedByDog = false;
+        RestoreOriginalParent();
+        ConfigureFreePhysics();
+        ballBody.linearVelocity = Vector3.zero;
+        ballBody.angularVelocity = Vector3.zero;
+
+        Vector3 recoveredPosition = FindRecoveryFloorPosition(preferredPosition);
+        transform.SetPositionAndRotation(recoveredPosition, Quaternion.identity);
+        lastThrowTime = Time.time - dogPickupDelay;
+
+        if (notifyDog && companionAI != null)
+            companionAI.BeginChasingThrownBall(this);
+    }
+
+    private void RestoreOriginalParent()
+    {
+        if (transform.parent != originalParent)
+            transform.SetParent(originalParent, true);
+    }
+
+    private Vector3 GetCollisionSafePosition(Vector3 from, Vector3 target)
+    {
+        Vector3 displacement = target - from;
+        float distance = displacement.magnitude;
+        if (distance <= 0.0001f)
+            return target;
+
+        float radius = GetCollisionRadius();
+        RaycastHit[] hits = Physics.SphereCastAll(
+            from,
+            radius,
+            displacement / distance,
+            distance,
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+        float nearestDistance = distance;
+        Transform playerRoot = playerCamera != null ? playerCamera.transform.root : null;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider candidate = hits[i].collider;
+            if (OwnsCollider(candidate))
+                continue;
+
+            Transform candidateTransform = candidate.transform;
+            if (playerRoot != null &&
+                (candidateTransform == playerRoot || candidateTransform.IsChildOf(playerRoot)))
+                continue;
+
+            nearestDistance = Mathf.Min(nearestDistance, Mathf.Max(0f, hits[i].distance - 0.01f));
+        }
+
+        return from + displacement.normalized * nearestDistance;
+    }
+
+    private float GetCollisionRadius()
+    {
+        float radius = 0.05f;
+        for (int i = 0; i < ballColliders.Length; i++)
+        {
+            Collider candidate = ballColliders[i];
+            if (candidate == null)
+                continue;
+
+            Vector3 extents = candidate.bounds.extents;
+            radius = Mathf.Max(radius, Mathf.Min(extents.x, Mathf.Min(extents.y, extents.z)));
+        }
+
+        return radius;
+    }
+
+    private bool IsOutsidePlayableArea()
+    {
+        if (transform.position.y < minimumValidWorldY)
+            return true;
+
+        Vector3 planarOffset = transform.position - mapCenter;
+        planarOffset.y = 0f;
+        return planarOffset.sqrMagnitude >
+               maximumDistanceFromMapCenter * maximumDistanceFromMapCenter;
+    }
+
+    private Vector3 FindRecoveryFloorPosition(Vector3 preferredPosition)
+    {
+        float radius = GetCollisionRadius();
+        Vector3[] offsets =
+        {
+            Vector3.zero,
+            Vector3.forward * 0.55f,
+            Vector3.right * 0.55f,
+            Vector3.back * 0.55f,
+            Vector3.left * 0.55f,
+            (Vector3.forward + Vector3.right).normalized * 0.8f,
+            (Vector3.back + Vector3.left).normalized * 0.8f
+        };
+
+        preferredPosition.y = mapCenter.y;
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            Vector3 candidate = preferredPosition + offsets[i];
+            Vector3 rayOrigin = candidate + Vector3.up * recoveryFloorProbeHeight;
+            RaycastHit[] hits = Physics.RaycastAll(
+                rayOrigin,
+                Vector3.down,
+                recoveryFloorProbeHeight * 2f,
+                Physics.DefaultRaycastLayers,
+                QueryTriggerInteraction.Ignore);
+            System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+            for (int hitIndex = 0; hitIndex < hits.Length; hitIndex++)
+            {
+                RaycastHit hit = hits[hitIndex];
+                if (OwnsCollider(hit.collider) || Vector3.Dot(hit.normal, Vector3.up) < 0.65f)
+                    continue;
+
+                Vector3 floorPosition = hit.point + Vector3.up * (radius + 0.025f);
+                if (!Physics.CheckSphere(
+                        floorPosition,
+                        radius * 0.92f,
+                        Physics.DefaultRaycastLayers,
+                        QueryTriggerInteraction.Ignore))
+                    return floorPosition;
+            }
+        }
+
+        return new Vector3(
+            preferredPosition.x,
+            mapCenter.y + Mathf.Max(0.15f, radius + 0.025f),
+            preferredPosition.z);
     }
 
     public bool OwnsCollider(Collider candidate)
