@@ -13,6 +13,8 @@ public sealed class FetchBallInteraction : MonoBehaviour
     [Header("Player Interaction")]
     [SerializeField] private Key interactionKey = Key.G;
     [SerializeField, Min(0.5f)] private float interactionDistance = 4f;
+    [Tooltip("작아진 공을 화면 정중앙에 정확히 맞추지 않아도 잡을 수 있는 화면 중앙 보조 반경입니다.")]
+    [SerializeField, Range(0.02f, 0.3f)] private float grabAimAssistViewportRadius = 0.14f;
     [SerializeField, Min(0.2f)] private float holdDistance = 0.72f;
     [SerializeField] private float holdVerticalOffset = -0.18f;
     [SerializeField, Min(0.1f)] private float heldFollowSpeed = 24f;
@@ -33,7 +35,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
     [Tooltip("공이 이 높이보다 아래로 떨어지면 맵 중앙의 안전한 바닥으로 되돌립니다.")]
     [SerializeField] private float minimumValidWorldY = -0.75f;
     [Tooltip("맵 중앙에서 이 거리보다 멀어진 공을 이탈한 것으로 판단합니다.")]
-    [SerializeField, Min(1f)] private float maximumDistanceFromMapCenter = 7f;
+    [SerializeField, Min(1f)] private float maximumDistanceFromMapCenter = 7.35f;
     [SerializeField] private Vector3 mapCenter = Vector3.zero;
     [SerializeField, Min(0.5f)] private float recoveryFloorProbeHeight = 3f;
 
@@ -45,6 +47,10 @@ public sealed class FetchBallInteraction : MonoBehaviour
     private Transform originalParent;
     private bool heldByPlayer;
     private bool carriedByDog;
+    private bool dogMouthCaptureInProgress;
+    private Vector3 dogCaptureStartPosition;
+    private Quaternion dogCaptureStartRotation;
+    private float dogMouthCaptureProgress;
     private float lastThrowTime = float.NegativeInfinity;
     private Vector3 heldVelocity;
     private PhysicsMaterial runtimeBallMaterial;
@@ -53,14 +59,26 @@ public sealed class FetchBallInteraction : MonoBehaviour
     public static bool ConsumedGrabInputThisFrame => lastConsumedInteractionFrame == Time.frameCount;
     public bool IsHeldByPlayer => heldByPlayer;
     public bool IsCarriedByDog => carriedByDog;
+    public bool IsDogMouthCaptureInProgress => dogMouthCaptureInProgress;
     public bool WasThrown => !heldByPlayer && !carriedByDog && lastThrowTime > float.NegativeInfinity;
     public Vector3 WorldPosition => transform.position;
+    public Vector3 CurrentVelocity => ballBody != null ? ballBody.linearVelocity : Vector3.zero;
+    public float CollisionRadius => GetCollisionRadius();
+
+    public static bool TryConsumeSharedGrabInput()
+    {
+        if (lastConsumedInteractionFrame == Time.frameCount)
+            return false;
+
+        lastConsumedInteractionFrame = Time.frameCount;
+        return true;
+    }
 
     public bool CanBePickedUpByDog
     {
         get
         {
-            if (heldByPlayer || carriedByDog || ballBody == null)
+            if (heldByPlayer || carriedByDog || dogMouthCaptureInProgress || ballBody == null)
                 return false;
 
             return Time.time - lastThrowTime >= dogPickupDelay &&
@@ -82,7 +100,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
     {
         ResolveReferences();
 
-        if (!heldByPlayer && !carriedByDog && IsOutsidePlayableArea())
+        if (!heldByPlayer && !carriedByDog && !dogMouthCaptureInProgress && IsOutsidePlayableArea())
         {
             RecoverToFloor(mapCenter);
             return;
@@ -95,16 +113,25 @@ public sealed class FetchBallInteraction : MonoBehaviour
             !Keyboard.current[interactionKey].wasPressedThisFrame)
             return;
 
+        // 강아지를 들고 있는 동안의 G 입력은 강아지 내려놓기 전용입니다.
+        if (ShepherdVertexGrabInteraction.IsAnyDogHeld)
+            return;
+
         if (heldByPlayer)
         {
-            lastConsumedInteractionFrame = Time.frameCount;
+            if (!TryConsumeSharedGrabInput())
+                return;
+
             ThrowFromPlayer();
             return;
         }
 
-        if (playerHeldBall == null && !carriedByDog && IsPlayerLookingAtBall())
+        if (playerHeldBall == null && !carriedByDog &&
+            !dogMouthCaptureInProgress && IsPlayerLookingAtBall())
         {
-            lastConsumedInteractionFrame = Time.frameCount;
+            if (!TryConsumeSharedGrabInput())
+                return;
+
             PickUpByPlayer();
         }
     }
@@ -114,6 +141,12 @@ public sealed class FetchBallInteraction : MonoBehaviour
         if (heldByPlayer)
         {
             UpdatePlayerHeldPose();
+            return;
+        }
+
+        if (dogMouthCaptureInProgress && companionAI != null)
+        {
+            ApplyDogMouthCapturePose(companionAI);
             return;
         }
 
@@ -155,22 +188,53 @@ public sealed class FetchBallInteraction : MonoBehaviour
         if (playerCamera == null)
             return false;
 
-        Ray ray = new Ray(playerCamera.transform.position, playerCamera.transform.forward);
-        if (!Physics.Raycast(
-                ray,
-                out RaycastHit hit,
-                interactionDistance,
-                Physics.DefaultRaycastLayers,
-                QueryTriggerInteraction.Ignore))
+        Vector3 cameraPosition = playerCamera.transform.position;
+        Vector3 toBall = transform.position - cameraPosition;
+        float distance = toBall.magnitude;
+        if (distance < 0.001f || distance > interactionDistance + GetCollisionRadius())
             return false;
 
-        Transform hitTransform = hit.collider.transform;
-        return hitTransform == transform || hitTransform.IsChildOf(transform);
+        Vector3 viewportPoint = playerCamera.WorldToViewportPoint(transform.position);
+        if (viewportPoint.z <= 0f)
+            return false;
+
+        Vector2 centerOffset = new Vector2(
+            viewportPoint.x - 0.5f,
+            viewportPoint.y - 0.5f);
+        if (centerOffset.sqrMagnitude >
+            grabAimAssistViewportRadius * grabAimAssistViewportRadius)
+            return false;
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            cameraPosition,
+            toBall / distance,
+            distance + GetCollisionRadius(),
+            Physics.DefaultRaycastLayers,
+            QueryTriggerInteraction.Ignore);
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+        Transform playerRoot = playerCamera.transform.root;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider candidate = hits[i].collider;
+            if (OwnsCollider(candidate))
+                return true;
+
+            Transform candidateTransform = candidate.transform;
+            if (playerRoot != null &&
+                (candidateTransform == playerRoot || candidateTransform.IsChildOf(playerRoot)))
+                continue;
+
+            // Aim assist never selects a ball through walls, furniture, or the dog.
+            return false;
+        }
+
+        return false;
     }
 
     private void PickUpByPlayer()
     {
-        if (playerCamera == null || playerHeldBall != null)
+        if (playerCamera == null || playerHeldBall != null ||
+            ShepherdVertexGrabInteraction.IsAnyDogHeld)
             return;
 
         heldByPlayer = true;
@@ -236,11 +300,23 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
     public bool TryAttachToDog(ShepherdCompanionAI dog)
     {
-        if (dog == null || heldByPlayer || carriedByDog)
+        if (!TryBeginDogMouthCapture(dog))
+            return false;
+
+        UpdateDogMouthCapture(dog, 1f);
+        return CompleteDogMouthCapture(dog);
+    }
+
+    public bool TryBeginDogMouthCapture(ShepherdCompanionAI dog)
+    {
+        if (dog == null || heldByPlayer || carriedByDog || dogMouthCaptureInProgress)
             return false;
 
         companionAI = dog;
-        carriedByDog = true;
+        dogMouthCaptureInProgress = true;
+        dogMouthCaptureProgress = 0f;
+        dogCaptureStartPosition = transform.position;
+        dogCaptureStartRotation = transform.rotation;
         ballBody.linearVelocity = Vector3.zero;
         ballBody.angularVelocity = Vector3.zero;
         ballBody.useGravity = false;
@@ -249,8 +325,51 @@ public sealed class FetchBallInteraction : MonoBehaviour
         ballBody.isKinematic = true;
         SetCollidersEnabled(false);
         RestoreOriginalParent();
+        return true;
+    }
+
+    public void UpdateDogMouthCapture(ShepherdCompanionAI dog, float progress)
+    {
+        if (!dogMouthCaptureInProgress || dog == null || dog != companionAI)
+            return;
+
+        dogMouthCaptureProgress = Mathf.Clamp01(progress);
+        ApplyDogMouthCapturePose(dog);
+    }
+
+    public bool CompleteDogMouthCapture(ShepherdCompanionAI dog)
+    {
+        if (!dogMouthCaptureInProgress || dog == null || dog != companionAI)
+            return false;
+
+        dogMouthCaptureProgress = 1f;
+        ApplyDogMouthCapturePose(dog);
+        dogMouthCaptureInProgress = false;
+        carriedByDog = true;
         SyncDogCarryPose(dog);
         return true;
+    }
+
+    public void CancelDogMouthCapture()
+    {
+        if (!dogMouthCaptureInProgress)
+            return;
+
+        dogMouthCaptureInProgress = false;
+        dogMouthCaptureProgress = 0f;
+        RestoreOriginalParent();
+        ConfigureFreePhysics();
+        ballBody.linearVelocity = Vector3.zero;
+        ballBody.angularVelocity = Vector3.zero;
+    }
+
+    private void ApplyDogMouthCapturePose(ShepherdCompanionAI dog)
+    {
+        float smoothProgress = dogMouthCaptureProgress * dogMouthCaptureProgress *
+                               (3f - 2f * dogMouthCaptureProgress);
+        transform.SetPositionAndRotation(
+            Vector3.Lerp(dogCaptureStartPosition, dog.GetBallCarryPoint(), smoothProgress),
+            Quaternion.Slerp(dogCaptureStartRotation, dog.GetBallCarryRotation(), smoothProgress));
     }
 
     public void DropFromDog(
@@ -258,9 +377,11 @@ public sealed class FetchBallInteraction : MonoBehaviour
         Vector3 releaseVelocity,
         Vector3 releaseAngularVelocity)
     {
-        if (!carriedByDog)
+        if (!carriedByDog && !dogMouthCaptureInProgress)
             return;
 
+        dogMouthCaptureInProgress = false;
+        dogMouthCaptureProgress = 0f;
         carriedByDog = false;
         RestoreOriginalParent();
         transform.position = worldPosition;
@@ -290,6 +411,8 @@ public sealed class FetchBallInteraction : MonoBehaviour
         if (heldByPlayer)
             return;
 
+        dogMouthCaptureInProgress = false;
+        dogMouthCaptureProgress = 0f;
         carriedByDog = false;
         RestoreOriginalParent();
         ConfigureFreePhysics();

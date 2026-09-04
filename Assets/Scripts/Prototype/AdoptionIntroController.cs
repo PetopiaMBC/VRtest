@@ -8,28 +8,93 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// 첫 실행에서만 이름을 받고 입양 정보를 저장하는 임시 도입 화면입니다.
-/// 이후 도입 연출을 교체하더라도 저장 키와 PlayScene 진입 계약은 유지할 수 있습니다.
+/// 첫 실행에서만 이름을 받고 입양 정보를 저장하는 도입 화면입니다.
+/// 이름 저장 키와 PlayScene 진입 계약은 이후 도입 연출을 교체해도 유지합니다.
 /// </summary>
 [DisallowMultipleComponent]
 public sealed class AdoptionIntroController : MonoBehaviour
 {
+    private enum PreviewPose
+    {
+        Standing,
+        Sitting,
+        Lying
+    }
+
     public const string AdoptionCompletedKey = "MyLittlePet.AdoptionCompleted";
     public const string DogNameKey = "MyLittlePet.DogName";
+    public const int MinimumNameLength = 2;
     public const int MaximumNameLength = 6;
 
+    [Header("Scene Flow")]
     [SerializeField] private string playSceneName = "PlayScene";
     [SerializeField] private string previewDogName = "Adoption Shiba Preview";
+    [SerializeField, Tooltip("Unity Editor에서 AdoptionScene을 직접 실행할 때 저장 여부와 관계없이 입양 UI를 보여줍니다. 빌드에는 영향을 주지 않습니다.")]
+    private bool showAdoptionWhenTestingInEditor = true;
+    [SerializeField, Min(0f)] private float playSceneTransitionDelay = 1.1f;
+    [SerializeField, Min(0.05f)] private float fadeOutDuration = 0.45f;
+    [SerializeField, Min(0.05f)] private float fadeInDuration = 0.55f;
+
+    [Header("Preview Animation")]
     [SerializeField] private string previewIdleState = "Arm_Shiba|Idle_2";
     [SerializeField] private string previewHappyStartState = "Arm_Shiba|Idle_5_start";
     [SerializeField] private string previewHappyLoopState = "Arm_Shiba|Idle_5_loop";
-    [SerializeField, Min(0f)] private float playSceneTransitionDelay = 1.1f;
+
+    [Header("Preview Idle Variety")]
+    [SerializeField] private string[] previewStandingIdleStates =
+    {
+        "Arm_Shiba|Idle_1",
+        "Arm_Shiba|Idle_2",
+        "Arm_Shiba|Idle_3",
+        "Arm_Shiba|Idle_4",
+        "Arm_Shiba|Idle_6",
+        "Arm_Shiba|Idle_7"
+    };
+    [SerializeField] private string previewSittingStartState = "Arm_Shiba|Sitting_start";
+    [SerializeField] private string[] previewSittingLoopStates =
+    {
+        "Arm_Shiba|Sitting_loop_1",
+        "Arm_Shiba|Sitting_loop_2"
+    };
+    [SerializeField] private string previewSittingEndState = "Arm_Shiba|Sitting_end";
+    [SerializeField] private string previewLyingStartState = "Arm_Shiba|Lie_belly_start";
+    [SerializeField] private string[] previewLyingLoopStates =
+    {
+        "Arm_Shiba|Lie_belly_loop_1",
+        "Arm_Shiba|Lie_belly_loop_2"
+    };
+    [SerializeField] private string previewLyingEndState = "Arm_Shiba|Lie_belly_end";
+    [SerializeField, Range(0f, 1f)] private float previewSittingChance = 0.22f;
+    [SerializeField, Range(0f, 1f)] private float previewLyingChance = 0.16f;
+    [SerializeField] private Vector2 previewStandingDurationRange = new Vector2(2.4f, 4.5f);
+    [SerializeField] private Vector2 previewRestDurationRange = new Vector2(3f, 5.5f);
+
+    [Header("UI Font")]
+    [SerializeField] private Font regularInterfaceFont;
+    [SerializeField] private Font boldInterfaceFont;
+
+    private static readonly Color Cocoa = new Color(0.30f, 0.16f, 0.11f);
+    private static readonly Color MutedCocoa = new Color(0.43f, 0.32f, 0.26f);
+    private static readonly Color Cream = new Color(1f, 0.975f, 0.91f, 0.985f);
+    private static readonly Color CreamBorder = new Color(0.76f, 0.63f, 0.46f);
+    private static readonly Color Salmon = new Color(0.98f, 0.43f, 0.40f);
+    private static readonly Color SalmonHighlight = new Color(1f, 0.55f, 0.49f);
+    private static readonly Color SalmonPressed = new Color(0.86f, 0.30f, 0.29f);
+    private static readonly Color DisabledButton = new Color(0.73f, 0.67f, 0.63f);
 
     private InputField nameInput;
     private Text guidanceText;
+    private Text countText;
+    private Text confirmLabel;
     private Button confirmButton;
     private Animator previewAnimator;
     private Font interfaceFont;
+    private Sprite roundedSprite;
+    private Texture2D roundedTexture;
+    private CanvasGroup fadeGroup;
+    private Coroutine previewIdleRoutine;
+    private PreviewPose previewPose;
+    private string currentPreviewIdleState;
     private bool applyingSanitizedText;
     private bool transitionStarted;
 
@@ -41,7 +106,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
     private void Awake()
     {
-        if (HasCompletedAdoption)
+        if (ShouldSkipAdoption())
         {
             SceneManager.LoadScene(playSceneName);
             return;
@@ -53,12 +118,15 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
     private IEnumerator Start()
     {
-        if (HasCompletedAdoption || nameInput == null)
+        if (ShouldSkipAdoption() || nameInput == null)
             yield break;
 
         yield return null;
         nameInput.ActivateInputField();
         nameInput.Select();
+
+        if (previewAnimator != null)
+            previewIdleRoutine = StartCoroutine(PlayPreviewIdleVariety());
     }
 
     private void Update()
@@ -66,26 +134,28 @@ public sealed class AdoptionIntroController : MonoBehaviour
         if (transitionStarted || nameInput == null || Keyboard.current == null)
             return;
 
-        if (Keyboard.current.enterKey.wasPressedThisFrame ||
-            Keyboard.current.numpadEnterKey.wasPressedThisFrame)
+        if ((Keyboard.current.enterKey.wasPressedThisFrame ||
+             Keyboard.current.numpadEnterKey.wasPressedThisFrame) &&
+            confirmButton != null && confirmButton.interactable)
+        {
             ConfirmAdoption();
+        }
     }
 
     public void ConfirmAdoption()
     {
-        if (transitionStarted || nameInput == null)
+        if (transitionStarted || nameInput == null || confirmButton == null)
             return;
 
         string sanitizedName = SanitizeName(nameInput.text).Trim();
-        nameInput.text = sanitizedName;
-        if (string.IsNullOrWhiteSpace(sanitizedName))
+        if (!IsValidName(sanitizedName))
         {
-            guidanceText.text = "이름을 한 글자 이상 입력해 주세요.";
-            guidanceText.color = new Color(0.9f, 0.28f, 0.22f);
+            UpdateConfirmAvailability(sanitizedName);
             nameInput.ActivateInputField();
             return;
         }
 
+        nameInput.SetTextWithoutNotify(sanitizedName);
         PlayerPrefs.SetString(DogNameKey, sanitizedName);
         PlayerPrefs.SetInt(AdoptionCompletedKey, 1);
         PlayerPrefs.Save();
@@ -93,8 +163,9 @@ public sealed class AdoptionIntroController : MonoBehaviour
         transitionStarted = true;
         nameInput.interactable = false;
         confirmButton.interactable = false;
-        guidanceText.color = new Color(0.25f, 0.5f, 0.3f);
-        guidanceText.text = sanitizedName + "(이)라는 이름을 기억했어요!";
+        confirmLabel.text = "만나러 가는 중...";
+        guidanceText.color = new Color(0.30f, 0.50f, 0.31f);
+        guidanceText.text = sanitizedName + "(이)와 이제 함께해요!";
         StartCoroutine(PlayWelcomeAndEnterPlayScene());
     }
 
@@ -104,27 +175,250 @@ public sealed class AdoptionIntroController : MonoBehaviour
             return;
 
         string sanitized = SanitizeName(value);
-        if (sanitized == value)
+        if (sanitized != value)
+        {
+            applyingSanitizedText = true;
+            nameInput.SetTextWithoutNotify(sanitized);
+            nameInput.caretPosition = sanitized.Length;
+            applyingSanitizedText = false;
+        }
+
+        UpdateConfirmAvailability(sanitized);
+    }
+
+    private void UpdateConfirmAvailability(string value)
+    {
+        string trimmed = string.IsNullOrEmpty(value) ? string.Empty : value.Trim();
+        int length = GetTextElementCount(trimmed);
+        bool valid = length >= MinimumNameLength && length <= MaximumNameLength;
+
+        if (confirmButton != null)
+            confirmButton.interactable = valid && !transitionStarted;
+
+        if (countText != null)
+        {
+            countText.text = length + " / " + MaximumNameLength;
+            countText.color = valid ? MutedCocoa : new Color(0.78f, 0.42f, 0.37f);
+        }
+
+        if (guidanceText == null || transitionStarted)
             return;
 
-        applyingSanitizedText = true;
-        nameInput.text = sanitized;
-        nameInput.caretPosition = sanitized.Length;
-        applyingSanitizedText = false;
+        guidanceText.color = valid ? MutedCocoa : new Color(0.74f, 0.39f, 0.34f);
+        if (length == 0)
+            guidanceText.text = "2~6글자 이름을 입력해주세요";
+        else if (length < MinimumNameLength)
+            guidanceText.text = "한 글자만 더 입력하면 함께할 수 있어요";
+        else if (length > MaximumNameLength)
+            guidanceText.text = "이름은 6글자 이내로 입력해주세요";
+        else
+            guidanceText.text = "좋아요! 이 이름으로 함께할 수 있어요";
     }
 
     private IEnumerator PlayWelcomeAndEnterPlayScene()
     {
-        if (previewAnimator != null)
-            previewAnimator.CrossFadeInFixedTime(previewHappyStartState, 0.12f);
+        // 현재 재생 중인 동작이 한 사이클을 마칠 때까지 기다린 뒤 환영 동작을 시작합니다.
+        if (previewIdleRoutine != null)
+        {
+            yield return previewIdleRoutine;
+            previewIdleRoutine = null;
+        }
 
-        yield return new WaitForSeconds(0.65f);
+        if (previewAnimator != null && previewPose != PreviewPose.Standing)
+        {
+            string standUpState = previewPose == PreviewPose.Sitting
+                ? previewSittingEndState
+                : previewLyingEndState;
+            previewPose = PreviewPose.Standing;
+            PlayPreviewState(standUpState, 0.12f);
+            yield return new WaitForSecondsRealtime(GetPreviewStateDuration(standUpState, 0.75f));
+        }
 
-        if (previewAnimator != null)
-            previewAnimator.CrossFadeInFixedTime(previewHappyLoopState, 0.12f);
+        PlayPreviewState(previewHappyStartState, 0.12f);
+        yield return new WaitForSecondsRealtime(
+            GetPreviewStateDuration(previewHappyStartState, 0.65f));
 
-        yield return new WaitForSeconds(playSceneTransitionDelay);
-        SceneManager.LoadScene(playSceneName);
+        PlayPreviewState(previewHappyLoopState, 0.12f);
+
+        yield return new WaitForSecondsRealtime(
+            GetWholeCycleDuration(
+                previewHappyLoopState,
+                new Vector2(playSceneTransitionDelay, playSceneTransitionDelay),
+                playSceneTransitionDelay));
+
+        // 새 씬에서도 페이드 인을 마무리할 수 있도록 전환 담당 오브젝트만 잠시 유지합니다.
+        DontDestroyOnLoad(gameObject);
+        if (fadeGroup != null)
+        {
+            fadeGroup.blocksRaycasts = true;
+            yield return FadeTo(1f, fadeOutDuration);
+        }
+
+        AsyncOperation loadOperation = SceneManager.LoadSceneAsync(playSceneName);
+        if (loadOperation != null)
+        {
+            while (!loadOperation.isDone)
+                yield return null;
+        }
+
+        // PlayScene의 카메라가 첫 프레임을 그린 뒤 검은 화면을 걷어 냅니다.
+        yield return null;
+        yield return null;
+
+        if (fadeGroup != null)
+        {
+            yield return FadeTo(0f, fadeInDuration);
+            fadeGroup.blocksRaycasts = false;
+        }
+
+        Destroy(gameObject);
+    }
+
+    private IEnumerator PlayPreviewIdleVariety()
+    {
+        currentPreviewIdleState = previewIdleState;
+        previewPose = PreviewPose.Standing;
+        yield return new WaitForSecondsRealtime(
+            GetWholeCycleDuration(previewIdleState, previewStandingDurationRange, 2f));
+
+        while (!transitionStarted && previewAnimator != null)
+        {
+            float sittingChance = Mathf.Clamp01(previewSittingChance);
+            float lyingChance = Mathf.Clamp01(previewLyingChance);
+            float choice = Random.value;
+
+            if (choice < sittingChance)
+                yield return PlayPreviewRestSequence(true);
+            else if (choice < sittingChance + lyingChance)
+                yield return PlayPreviewRestSequence(false);
+            else
+                yield return PlayPreviewStandingIdle();
+
+        }
+    }
+
+    private IEnumerator PlayPreviewStandingIdle()
+    {
+        previewPose = PreviewPose.Standing;
+        string nextState = ChoosePreviewState(previewStandingIdleStates, currentPreviewIdleState);
+        if (!string.IsNullOrEmpty(nextState))
+        {
+            currentPreviewIdleState = nextState;
+            PlayPreviewState(nextState, 0.18f);
+        }
+
+        yield return new WaitForSecondsRealtime(
+            GetWholeCycleDuration(nextState, previewStandingDurationRange, 3f));
+    }
+
+    private IEnumerator PlayPreviewRestSequence(bool sitting)
+    {
+        string startState = sitting ? previewSittingStartState : previewLyingStartState;
+        string[] loopStates = sitting ? previewSittingLoopStates : previewLyingLoopStates;
+        string endState = sitting ? previewSittingEndState : previewLyingEndState;
+
+        previewPose = sitting ? PreviewPose.Sitting : PreviewPose.Lying;
+        PlayPreviewState(startState, 0.18f);
+        yield return new WaitForSecondsRealtime(GetPreviewStateDuration(startState, sitting ? 0.75f : 0.9f));
+        if (transitionStarted)
+            yield break;
+
+        string loopState = ChoosePreviewState(loopStates, string.Empty);
+        PlayPreviewState(loopState, 0.15f);
+        yield return new WaitForSecondsRealtime(
+            GetWholeCycleDuration(loopState, previewRestDurationRange, 4f));
+        if (transitionStarted)
+            yield break;
+
+        previewPose = PreviewPose.Standing;
+        PlayPreviewState(endState, 0.15f);
+        yield return new WaitForSecondsRealtime(GetPreviewStateDuration(endState, sitting ? 0.75f : 0.9f));
+    }
+
+    private void PlayPreviewState(string stateName, float blendDuration)
+    {
+        if (previewAnimator == null || string.IsNullOrEmpty(stateName))
+            return;
+
+        previewAnimator.CrossFadeInFixedTime(stateName, blendDuration, 0);
+    }
+
+    private float GetPreviewStateDuration(string stateName, float fallback)
+    {
+        if (previewAnimator == null ||
+            previewAnimator.runtimeAnimatorController == null ||
+            string.IsNullOrEmpty(stateName))
+        {
+            return fallback;
+        }
+
+        AnimationClip[] clips = previewAnimator.runtimeAnimatorController.animationClips;
+        for (int i = 0; i < clips.Length; i++)
+        {
+            if (clips[i] != null && clips[i].name == stateName)
+                return Mathf.Max(0.2f, clips[i].length);
+        }
+
+        return fallback;
+    }
+
+    private float GetWholeCycleDuration(string stateName, Vector2 targetRange, float fallback)
+    {
+        float clipDuration = GetPreviewStateDuration(stateName, fallback);
+        float targetDuration = RandomDuration(targetRange, fallback);
+        int completedCycles = Mathf.Max(1, Mathf.RoundToInt(targetDuration / clipDuration));
+        return clipDuration * completedCycles;
+    }
+
+    private static string ChoosePreviewState(string[] states, string excludedState)
+    {
+        if (states == null || states.Length == 0)
+            return string.Empty;
+
+        int availableCount = 0;
+        for (int i = 0; i < states.Length; i++)
+        {
+            if (!string.IsNullOrEmpty(states[i]) && states[i] != excludedState)
+                availableCount++;
+        }
+
+        if (availableCount == 0)
+            return states[0];
+
+        int selected = Random.Range(0, availableCount);
+        for (int i = 0; i < states.Length; i++)
+        {
+            if (string.IsNullOrEmpty(states[i]) || states[i] == excludedState)
+                continue;
+
+            if (selected-- == 0)
+                return states[i];
+        }
+
+        return states[0];
+    }
+
+    private static float RandomDuration(Vector2 range, float fallback)
+    {
+        float minimum = Mathf.Max(0.1f, Mathf.Min(range.x, range.y));
+        float maximum = Mathf.Max(minimum, Mathf.Max(range.x, range.y));
+        return maximum > minimum ? Random.Range(minimum, maximum) : Mathf.Max(minimum, fallback);
+    }
+
+    private IEnumerator FadeTo(float targetAlpha, float duration)
+    {
+        float startAlpha = fadeGroup.alpha;
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float progress = Mathf.Clamp01(elapsed / duration);
+            progress = progress * progress * (3f - 2f * progress);
+            fadeGroup.alpha = Mathf.Lerp(startAlpha, targetAlpha, progress);
+            yield return null;
+        }
+
+        fadeGroup.alpha = targetAlpha;
     }
 
     private void PreparePreviewDog()
@@ -150,11 +444,15 @@ public sealed class AdoptionIntroController : MonoBehaviour
             previewAnimator.applyRootMotion = false;
             previewAnimator.CrossFadeInFixedTime(previewIdleState, 0.05f);
         }
+
     }
 
     private void CreateInterface()
     {
-        interfaceFont = CreateKoreanCapableFont();
+        interfaceFont = regularInterfaceFont != null
+            ? regularInterfaceFont
+            : CreateKoreanCapableFont();
+        roundedSprite = CreateRoundedRectSprite();
         EnsureEventSystem();
 
         GameObject canvasObject = new GameObject(
@@ -165,128 +463,301 @@ public sealed class AdoptionIntroController : MonoBehaviour
             typeof(GraphicRaycaster));
         Canvas canvas = canvasObject.GetComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 20;
+
         CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f, 1080f);
         scaler.matchWidthOrHeight = 0.5f;
 
         RectTransform panel = CreatePanel(canvasObject.transform);
-        CreateText(
-            "Title",
-            panel,
-            "새로운 가족을 만났어요",
-            52,
-            FontStyle.Bold,
-            TextAnchor.MiddleCenter,
-            new Vector2(80f, -55f),
-            new Vector2(-80f, -125f));
+        CreateHeader(panel);
 
-        guidanceText = CreateText(
-            "Guidance",
+        Text description = CreateCenteredText(
+            "Description",
             panel,
-            "강아지의 이름을 정해 주세요. (한글 가능, 최대 6자)",
-            28,
+            "우리 가족이 될 강아지의 이름을 지어주세요",
+            25,
             FontStyle.Normal,
-            TextAnchor.MiddleCenter,
-            new Vector2(110f, -145f),
-            new Vector2(-110f, -195f));
-        guidanceText.color = new Color(0.24f, 0.26f, 0.3f);
+            new Vector2(0f, -76f),
+            new Vector2(670f, 42f));
+        description.color = MutedCocoa;
 
         nameInput = CreateNameInput(panel);
+
+        Text changeHint = CreateCenteredText(
+            "Change Hint",
+            panel,
+            "이름은 나중에도 변경할 수 있어요",
+            21,
+            FontStyle.Normal,
+            new Vector2(0f, -246f),
+            new Vector2(650f, 34f));
+        changeHint.color = new Color(0.47f, 0.37f, 0.30f);
+
+        guidanceText = CreateCenteredText(
+            "Guidance",
+            panel,
+            string.Empty,
+            21,
+            FontStyle.Bold,
+            new Vector2(0f, -288f),
+            new Vector2(650f, 36f));
+
         confirmButton = CreateConfirmButton(panel);
         confirmButton.onClick.AddListener(ConfirmAdoption);
+        UpdateConfirmAvailability(string.Empty);
+
+        CreateFadeOverlay();
     }
 
     private RectTransform CreatePanel(Transform parent)
     {
-        GameObject panelObject = new GameObject("Name Panel", typeof(RectTransform), typeof(Image));
-        panelObject.transform.SetParent(parent, false);
-        RectTransform panel = panelObject.GetComponent<RectTransform>();
-        panel.anchorMin = new Vector2(0.5f, 0f);
-        panel.anchorMax = new Vector2(0.5f, 0f);
-        panel.pivot = new Vector2(0.5f, 0f);
-        panel.anchoredPosition = new Vector2(0f, 45f);
-        panel.sizeDelta = new Vector2(920f, 360f);
-        panelObject.GetComponent<Image>().color = new Color(1f, 0.98f, 0.94f, 0.96f);
+        Image panelImage = CreateRoundedImage("Name Card", parent, CreamBorder);
+        RectTransform panel = panelImage.rectTransform;
+        // 왼쪽의 강아지 영역을 침범하지 않도록 화면 오른쪽 가장자리를 기준으로 배치합니다.
+        panel.anchorMin = new Vector2(1f, 0.5f);
+        panel.anchorMax = new Vector2(1f, 0.5f);
+        panel.pivot = new Vector2(1f, 0.5f);
+        panel.anchoredPosition = new Vector2(-120f, 0f);
+        panel.sizeDelta = new Vector2(780f, 500f);
+
+        Shadow shadow = panelImage.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0.30f, 0.20f, 0.14f, 0.28f);
+        shadow.effectDistance = new Vector2(0f, -12f);
+        shadow.useGraphicAlpha = true;
+
+        Image fill = CreateRoundedImage("Card Fill", panel, Cream);
+        Stretch(fill.rectTransform, 5f);
         return panel;
+    }
+
+    private void CreateHeader(RectTransform panel)
+    {
+        Image header = CreateRoundedImage("Title Badge", panel, Salmon);
+        RectTransform rect = header.rectTransform;
+        rect.anchorMin = new Vector2(0.5f, 1f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = new Vector2(0f, 20f);
+        rect.sizeDelta = new Vector2(560f, 100f);
+
+        Shadow shadow = header.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0.42f, 0.16f, 0.12f, 0.35f);
+        shadow.effectDistance = new Vector2(0f, -7f);
+
+        Outline outline = header.gameObject.AddComponent<Outline>();
+        outline.effectColor = new Color(0.80f, 0.31f, 0.29f, 0.8f);
+        outline.effectDistance = new Vector2(2f, -2f);
+
+        Text title = CreateCenteredText(
+            "Title",
+            rect,
+            "이름을 정해주세요",
+            40,
+            FontStyle.Bold,
+            new Vector2(0f, -50f),
+            new Vector2(410f, 76f));
+        title.color = Cocoa;
+
+        CreatePaw(rect, new Vector2(-222f, 0f));
+        CreatePaw(rect, new Vector2(222f, 0f));
     }
 
     private InputField CreateNameInput(RectTransform parent)
     {
-        GameObject inputObject = new GameObject("Dog Name Input", typeof(RectTransform), typeof(Image), typeof(InputField));
-        inputObject.transform.SetParent(parent, false);
-        RectTransform rect = inputObject.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0.5f, 1f);
-        rect.anchorMax = new Vector2(0.5f, 1f);
-        rect.pivot = new Vector2(0.5f, 1f);
-        rect.anchoredPosition = new Vector2(-105f, -215f);
-        rect.sizeDelta = new Vector2(500f, 76f);
-        inputObject.GetComponent<Image>().color = Color.white;
+        Image border = CreateRoundedImage("Dog Name Input Border", parent, CreamBorder);
+        RectTransform borderRect = border.rectTransform;
+        borderRect.anchorMin = new Vector2(0.5f, 1f);
+        borderRect.anchorMax = new Vector2(0.5f, 1f);
+        borderRect.pivot = new Vector2(0.5f, 0.5f);
+        borderRect.anchoredPosition = new Vector2(0f, -166f);
+        borderRect.sizeDelta = new Vector2(620f, 84f);
 
-        Text inputText = CreateText(
+        Image inputImage = CreateRoundedImage("Dog Name Input", borderRect, new Color(1f, 1f, 1f, 0.96f));
+        Stretch(inputImage.rectTransform, 5f);
+        inputImage.raycastTarget = true;
+        InputField input = inputImage.gameObject.AddComponent<InputField>();
+        input.targetGraphic = inputImage;
+
+        Text inputText = CreateStretchText(
             "Text",
-            rect,
+            inputImage.rectTransform,
             string.Empty,
-            34,
-            FontStyle.Normal,
-            TextAnchor.MiddleLeft,
-            new Vector2(24f, 0f),
-            new Vector2(-24f, 0f));
-        inputText.color = new Color(0.12f, 0.13f, 0.16f);
+            32,
+            FontStyle.Bold,
+            TextAnchor.MiddleCenter,
+            new Vector2(36f, 8f),
+            new Vector2(-82f, -8f));
+        inputText.color = Cocoa;
 
-        Text placeholder = CreateText(
+        Text placeholder = CreateStretchText(
             "Placeholder",
-            rect,
-            "예: 몽이",
-            34,
-            FontStyle.Italic,
-            TextAnchor.MiddleLeft,
-            new Vector2(24f, 0f),
-            new Vector2(-24f, 0f));
-        placeholder.color = new Color(0.55f, 0.55f, 0.58f, 0.8f);
+            inputImage.rectTransform,
+            "이름을 입력하세요",
+            29,
+            FontStyle.Normal,
+            TextAnchor.MiddleCenter,
+            new Vector2(36f, 8f),
+            new Vector2(-82f, -8f));
+        placeholder.color = new Color(0.69f, 0.64f, 0.58f, 0.75f);
 
-        InputField input = inputObject.GetComponent<InputField>();
+        countText = CreateCenteredText(
+            "Character Count",
+            inputImage.rectTransform,
+            "0 / 6",
+            18,
+            FontStyle.Bold,
+            new Vector2(258f, -42f),
+            new Vector2(72f, 40f));
+        countText.color = new Color(0.78f, 0.42f, 0.37f);
+
         input.textComponent = inputText;
         input.placeholder = placeholder;
         input.lineType = InputField.LineType.SingleLine;
-        input.characterLimit = MaximumNameLength;
+        // 글자소 단위로 직접 제한하여 한글과 조합 문자를 중간에서 자르지 않습니다.
+        input.characterLimit = 0;
         input.onValueChanged.AddListener(OnNameChanged);
         return input;
     }
 
     private Button CreateConfirmButton(RectTransform parent)
     {
-        GameObject buttonObject = new GameObject("Confirm", typeof(RectTransform), typeof(Image), typeof(Button));
-        buttonObject.transform.SetParent(parent, false);
-        RectTransform rect = buttonObject.GetComponent<RectTransform>();
+        Image image = CreateRoundedImage("Confirm", parent, Color.white);
+        image.raycastTarget = true;
+        RectTransform rect = image.rectTransform;
         rect.anchorMin = new Vector2(0.5f, 1f);
         rect.anchorMax = new Vector2(0.5f, 1f);
-        rect.pivot = new Vector2(0.5f, 1f);
-        rect.anchoredPosition = new Vector2(280f, -215f);
-        rect.sizeDelta = new Vector2(220f, 76f);
-        Image image = buttonObject.GetComponent<Image>();
-        image.color = new Color(0.95f, 0.58f, 0.2f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = new Vector2(0f, -410f);
+        rect.sizeDelta = new Vector2(360f, 80f);
 
-        Text label = CreateText(
+        Shadow shadow = image.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0.42f, 0.16f, 0.12f, 0.34f);
+        shadow.effectDistance = new Vector2(0f, -7f);
+
+        Button button = image.gameObject.AddComponent<Button>();
+        button.targetGraphic = image;
+        button.transition = Selectable.Transition.ColorTint;
+        ColorBlock colors = button.colors;
+        colors.normalColor = Salmon;
+        colors.highlightedColor = SalmonHighlight;
+        colors.selectedColor = SalmonHighlight;
+        colors.pressedColor = SalmonPressed;
+        colors.disabledColor = DisabledButton;
+        colors.fadeDuration = 0.12f;
+        colors.colorMultiplier = 1f;
+        button.colors = colors;
+
+        confirmLabel = CreateCenteredText(
             "Label",
             rect,
             "함께하기",
             30,
             FontStyle.Bold,
-            TextAnchor.MiddleCenter,
-            Vector2.zero,
-            Vector2.zero);
-        label.color = Color.white;
-
-        Button button = buttonObject.GetComponent<Button>();
-        ColorBlock colors = button.colors;
-        colors.highlightedColor = new Color(1f, 0.68f, 0.3f);
-        colors.pressedColor = new Color(0.82f, 0.43f, 0.12f);
-        button.colors = colors;
+            new Vector2(0f, -40f),
+            new Vector2(330f, 70f));
+        confirmLabel.color = Color.white;
+        Shadow labelShadow = confirmLabel.gameObject.AddComponent<Shadow>();
+        labelShadow.effectColor = new Color(0.35f, 0.12f, 0.10f, 0.38f);
+        labelShadow.effectDistance = new Vector2(1f, -2f);
         return button;
     }
 
-    private Text CreateText(
+    private void CreatePaw(Transform parent, Vector2 position)
+    {
+        GameObject paw = new GameObject("Paw", typeof(RectTransform));
+        paw.transform.SetParent(parent, false);
+        RectTransform pawRect = paw.GetComponent<RectTransform>();
+        pawRect.anchorMin = pawRect.anchorMax = new Vector2(0.5f, 0.5f);
+        pawRect.anchoredPosition = position;
+        pawRect.sizeDelta = new Vector2(48f, 48f);
+
+        CreatePawDot(pawRect, new Vector2(0f, -8f), new Vector2(24f, 21f));
+        CreatePawDot(pawRect, new Vector2(-13f, 9f), new Vector2(11f, 14f));
+        CreatePawDot(pawRect, new Vector2(-4f, 16f), new Vector2(11f, 14f));
+        CreatePawDot(pawRect, new Vector2(7f, 16f), new Vector2(11f, 14f));
+        CreatePawDot(pawRect, new Vector2(16f, 8f), new Vector2(11f, 14f));
+    }
+
+    private void CreatePawDot(Transform parent, Vector2 position, Vector2 size)
+    {
+        Image dot = CreateRoundedImage("Paw Dot", parent, new Color(0.76f, 0.22f, 0.21f, 0.75f));
+        RectTransform rect = dot.rectTransform;
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+    }
+
+    private void CreateFadeOverlay()
+    {
+        GameObject fadeObject = new GameObject(
+            "Scene Transition Fade",
+            typeof(RectTransform),
+            typeof(Canvas),
+            typeof(CanvasScaler),
+            typeof(CanvasGroup),
+            typeof(Image));
+        fadeObject.transform.SetParent(transform, false);
+
+        Canvas canvas = fadeObject.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 32760;
+
+        CanvasScaler scaler = fadeObject.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+
+        Image image = fadeObject.GetComponent<Image>();
+        image.color = new Color(0.075f, 0.055f, 0.045f, 1f);
+        image.raycastTarget = true;
+
+        RectTransform rect = fadeObject.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        fadeGroup = fadeObject.GetComponent<CanvasGroup>();
+        fadeGroup.alpha = 0f;
+        fadeGroup.blocksRaycasts = false;
+        fadeGroup.interactable = false;
+    }
+
+    private Image CreateRoundedImage(string objectName, Transform parent, Color color)
+    {
+        GameObject imageObject = new GameObject(objectName, typeof(RectTransform), typeof(Image));
+        imageObject.transform.SetParent(parent, false);
+        Image image = imageObject.GetComponent<Image>();
+        image.sprite = roundedSprite;
+        image.type = Image.Type.Sliced;
+        image.color = color;
+        image.raycastTarget = false;
+        return image;
+    }
+
+    private Text CreateCenteredText(
+        string objectName,
+        Transform parent,
+        string value,
+        int fontSize,
+        FontStyle fontStyle,
+        Vector2 anchoredPosition,
+        Vector2 size)
+    {
+        GameObject textObject = new GameObject(objectName, typeof(RectTransform), typeof(Text));
+        textObject.transform.SetParent(parent, false);
+        RectTransform rect = textObject.GetComponent<RectTransform>();
+        rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = anchoredPosition;
+        rect.sizeDelta = size;
+
+        Text text = ConfigureText(textObject.GetComponent<Text>(), value, fontSize, fontStyle, TextAnchor.MiddleCenter);
+        return text;
+    }
+
+    private Text CreateStretchText(
         string objectName,
         Transform parent,
         string value,
@@ -299,22 +770,78 @@ public sealed class AdoptionIntroController : MonoBehaviour
         GameObject textObject = new GameObject(objectName, typeof(RectTransform), typeof(Text));
         textObject.transform.SetParent(parent, false);
         RectTransform rect = textObject.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0f, 1f);
-        rect.anchorMax = new Vector2(1f, 1f);
-        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
         rect.offsetMin = offsetMin;
         rect.offsetMax = offsetMax;
+        return ConfigureText(textObject.GetComponent<Text>(), value, fontSize, fontStyle, alignment);
+    }
 
-        Text text = textObject.GetComponent<Text>();
-        text.font = interfaceFont;
+    private Text ConfigureText(Text text, string value, int fontSize, FontStyle fontStyle, TextAnchor alignment)
+    {
+        bool requestsBold = fontStyle == FontStyle.Bold || fontStyle == FontStyle.BoldAndItalic;
+        bool usesDedicatedBoldFont = requestsBold && boldInterfaceFont != null;
+        text.font = usesDedicatedBoldFont ? boldInterfaceFont : interfaceFont;
         text.text = value;
         text.fontSize = fontSize;
-        text.fontStyle = fontStyle;
+        // Maplestory Bold 자체가 굵은 서체이므로 Unity의 합성 Bold를 다시 겹치지 않습니다.
+        text.fontStyle = usesDedicatedBoldFont ? FontStyle.Normal : fontStyle;
         text.alignment = alignment;
         text.horizontalOverflow = HorizontalWrapMode.Overflow;
         text.verticalOverflow = VerticalWrapMode.Overflow;
-        text.color = new Color(0.12f, 0.13f, 0.16f);
+        text.raycastTarget = false;
+        text.color = Cocoa;
         return text;
+    }
+
+    private Sprite CreateRoundedRectSprite()
+    {
+        const int size = 64;
+        const float radius = 15f;
+        roundedTexture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            name = "Adoption UI Rounded Rectangle",
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp,
+            hideFlags = HideFlags.DontSave
+        };
+
+        Color[] pixels = new Color[size * size];
+        float half = size * 0.5f;
+        float innerExtent = half - radius;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float qx = Mathf.Max(Mathf.Abs(x + 0.5f - half) - innerExtent, 0f);
+                float qy = Mathf.Max(Mathf.Abs(y + 0.5f - half) - innerExtent, 0f);
+                float distance = Mathf.Sqrt(qx * qx + qy * qy) - radius;
+                float alpha = Mathf.Clamp01(0.5f - distance);
+                pixels[y * size + x] = new Color(1f, 1f, 1f, alpha);
+            }
+        }
+
+        roundedTexture.SetPixels(pixels);
+        roundedTexture.Apply(false, false);
+        Sprite sprite = Sprite.Create(
+            roundedTexture,
+            new Rect(0f, 0f, size, size),
+            new Vector2(0.5f, 0.5f),
+            100f,
+            0,
+            SpriteMeshType.FullRect,
+            new Vector4(16f, 16f, 16f, 16f));
+        sprite.name = "Adoption UI Rounded Sprite";
+        sprite.hideFlags = HideFlags.DontSave;
+        return sprite;
+    }
+
+    private static void Stretch(RectTransform rect, float inset)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = new Vector2(inset, inset);
+        rect.offsetMax = new Vector2(-inset, -inset);
     }
 
     private static void EnsureEventSystem()
@@ -323,7 +850,8 @@ public sealed class AdoptionIntroController : MonoBehaviour
             return;
 
         GameObject eventSystemObject = new GameObject("EventSystem", typeof(EventSystem));
-        eventSystemObject.AddComponent<InputSystemUIInputModule>();
+        InputSystemUIInputModule inputModule = eventSystemObject.AddComponent<InputSystemUIInputModule>();
+        inputModule.AssignDefaultActions();
     }
 
     private static Font CreateKoreanCapableFont()
@@ -336,8 +864,31 @@ public sealed class AdoptionIntroController : MonoBehaviour
             "Arial Unicode MS",
             "Arial"
         };
-        Font font = Font.CreateDynamicFontFromOSFont(candidates, 36);
+        Font font = Font.CreateDynamicFontFromOSFont(candidates, 44);
         return font != null ? font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+    }
+
+    private static bool IsValidName(string value)
+    {
+        int length = GetTextElementCount(value);
+        return length >= MinimumNameLength && length <= MaximumNameLength;
+    }
+
+    private bool ShouldSkipAdoption()
+    {
+#if UNITY_EDITOR
+        if (showAdoptionWhenTestingInEditor &&
+            SceneManager.GetActiveScene().name == gameObject.scene.name)
+        {
+            return false;
+        }
+#endif
+        return HasCompletedAdoption;
+    }
+
+    private static int GetTextElementCount(string value)
+    {
+        return string.IsNullOrEmpty(value) ? 0 : StringInfo.ParseCombiningCharacters(value).Length;
     }
 
     private static string SanitizeName(string value)
@@ -345,11 +896,8 @@ public sealed class AdoptionIntroController : MonoBehaviour
         if (string.IsNullOrEmpty(value))
             return string.Empty;
 
-        int[] textElementStarts = StringInfo.ParseCombiningCharacters(value);
-        int elementCount = Mathf.Min(MaximumNameLength, textElementStarts.Length);
-        if (elementCount >= textElementStarts.Length)
-            return value;
-
-        return value.Substring(0, textElementStarts[elementCount]);
+        // 길이를 자동으로 잘라내지 않습니다. 7자 이상도 화면에 유지하여
+        // 사용자가 직접 수정할 수 있게 하고, 버튼 활성 조건에서 거절합니다.
+        return value.Replace("\r", string.Empty).Replace("\n", string.Empty);
     }
 }

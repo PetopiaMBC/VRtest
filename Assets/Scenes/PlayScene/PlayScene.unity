@@ -633,6 +633,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 5151321656137451384, guid: b24d0c87288f9594e961658f25730e3d, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1497489827}
+    - targetCorrespondingSourceObject: {fileID: 5151321656137451384, guid: b24d0c87288f9594e961658f25730e3d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1497489829}
   m_SourcePrefab: {fileID: 100100000, guid: b24d0c87288f9594e961658f25730e3d, type: 3}
 --- !u!95 &430774187 stripped
 Animator:
@@ -887,11 +890,11 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 2243020122175513880, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 80
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122175513880, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122246761220, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -935,11 +938,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122829345126, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 80
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122829345126, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020122894124685, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -963,11 +966,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2243020123108092049, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 89.4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2243020123108092049, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573833148750, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -991,19 +994,19 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573999888530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 80
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419573999888530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574750989019, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 80
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574750989019, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419574852684551, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1027,11 +1030,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575037781530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 80
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575037781530, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575382347206, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1055,11 +1058,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575634488915, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 89.4
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575634488915, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_SizeDelta.y
-      value: 46
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4750419575962273167, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_AnchorMax.y
@@ -1301,8 +1304,11 @@ MonoBehaviour:
   headYawLimit: 42
   headPitchLimit: 38
   headTurnSpeed: 7
+  heldBallHeadTurnSpeed: 15
   heldBallHeadYawLimit: 68
   heldBallHeadPitchLimit: 55
+  heldBallLookCorrectionStrength: 0.96
+  heldBallNeckCorrectionShare: 0.35
   smallLookAngle: 18
   largeLookAngle: 58
   sustainedBodyTurnDelay: 0.65
@@ -1329,7 +1335,7 @@ MonoBehaviour:
   obstacleRepositionStopDistance: 0.35
   mapRecoveryCenter: {x: 0, y: 0, z: 0}
   minimumValidWorldY: -0.65
-  maximumDistanceFromMapCenter: 6
+  maximumDistanceFromMapCenter: 7.25
   wallPenetrationGrace: 0.3
   unreachableBallRecoveryDelay: 4.5
   fetchProgressThreshold: 0.08
@@ -1358,6 +1364,17 @@ MonoBehaviour:
   sleepStartState: Arm_Shiba|Lie_belly_sleep_start
   sleepLoopState: Arm_Shiba|Lie_belly_sleep
   sleepEndState: Arm_Shiba|Lie_belly_sleep_end
+  pettingKey: 20
+  pettingDistance: 1.35
+  pettingLookAngle: 18
+  pettingFacingAngle: 5
+  pettingTurnStepSpeed: 0.22
+  pettingDuration: 3.4
+  pettingHeadTiltCycles: 3
+  pettingHeadTiltAngle: 13
+  pettingEyelidCloseOffset: -56.2
+  minimumPettingHearts: 3
+  maximumPettingHearts: 6
   heldBallWaitDistance: 1.45
   ballPickupDistance: 0.42
   ballBiteStartDistance: 0.82
@@ -1367,7 +1384,11 @@ MonoBehaviour:
   ballReturnDistance: 1.25
   ballBiteDuration: 1.05
   ballBiteAttachRatio: 0.48
+  ballMouthContactPadding: 0.16
+  ballMouthCaptureDuration: 0.13
+  ballPickupPredictionTime: 0.28
   ballBiteAnimationSpeed: 1.4
+  ballPickupSettleDuration: 0.18
   ballDropDuration: 1.05
   ballDropReleaseRatio: 0.42
   ballBiteState: Arm_Shiba|Attack_Bite_IP
@@ -1420,6 +1441,32 @@ MonoBehaviour:
   runTurnAnimationDuration: 0.35
   walkTurnAngleThreshold: 12
   walkTurnAnimationDuration: 0.35
+--- !u!114 &1497489829
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1497489824}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd9d4f5450e865241b5433948a2245b3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::PetNeedsSystem
+  hunger: 100
+  fatigue: 100
+  decreaseNeedsOverTime: 1
+  hungerDecreaseInterval: 15
+  fatigueDecreaseInterval: 30
+  passiveDecreaseAmount: 1
+  fetchCatchHungerCost: 3
+  fetchCatchFatigueCost: 5
+  grabbedFatigueCost: 3
+  pettingFatigueCost: 1
+  mealRecovery: 70
+  sleepRecovery: 70
+  optionalMealThreshold: 30
+  mandatorySleepThreshold: 20
 --- !u!1001 &1711635975
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -1692,6 +1739,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FetchBallInteraction
   interactionKey: 21
   interactionDistance: 4
+  grabAimAssistViewportRadius: 0.14
   holdDistance: 0.72
   holdVerticalOffset: -0.18
   heldFollowSpeed: 24
@@ -1704,7 +1752,7 @@ MonoBehaviour:
   playerCamera: {fileID: 0}
   companionAI: {fileID: 0}
   minimumValidWorldY: -0.75
-  maximumDistanceFromMapCenter: 7
+  maximumDistanceFromMapCenter: 7.35
   mapCenter: {x: 0, y: 0, z: 0}
   recoveryFloorProbeHeight: 3
 --- !u!54 &1834636818

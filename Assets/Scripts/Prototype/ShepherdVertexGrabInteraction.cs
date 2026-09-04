@@ -8,6 +8,7 @@ using UnityEngine.InputSystem;
 /// 얼굴 폴리곤을 직접 늘리지 않고 리깅된 척추, 다리, 꼬리 뼈를 중력 방향으로
 /// 회전시켜 목을 잡고 몸 전체가 아래로 매달리는 모습을 만듭니다.
 /// </summary>
+[DefaultExecutionOrder(1100)]
 public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 {
     #region 인스펙터 설정
@@ -239,6 +240,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private Vector3 headForwardAxisLocal = Vector3.forward;
     private Vector3 headUpAxisLocal = Vector3.up;
 
+    private static ShepherdVertexGrabInteraction heldShepherd;
+
     private bool holding;
     private Vector3 rootVelocity;
     private Vector3 currentGrabTarget;
@@ -274,6 +277,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private bool skinnedRendererWasEnabled;
 
     public bool IsHolding => holding;
+    public static bool IsAnyDogHeld => heldShepherd != null && heldShepherd.holding;
 
     #endregion
 
@@ -305,14 +309,21 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             // 공을 들고 있거나 같은 프레임에 공 상호작용이 처리된 경우에는
             // 동일한 G 입력으로 강아지까지 동시에 잡거나 내려놓지 않습니다.
             if (!holding &&
-                (FetchBallInteraction.IsAnyBallHeldByPlayer ||
+                (IsAnyDogHeld ||
+                 FetchBallInteraction.IsAnyBallHeldByPlayer ||
                  FetchBallInteraction.ConsumedGrabInputThisFrame))
                 return;
 
             if (holding)
-                ReleaseShepherd();
+            {
+                if (FetchBallInteraction.TryConsumeSharedGrabInput())
+                    ReleaseShepherd();
+            }
             else if (TryFindGrabHit())
-                GrabShepherd();
+            {
+                if (FetchBallInteraction.TryConsumeSharedGrabInput())
+                    GrabShepherd();
+            }
         }
     }
 
@@ -344,12 +355,18 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         if (holding)
             CompleteReleaseShepherd();
 
+        if (heldShepherd == this)
+            heldShepherd = null;
+
         releasePoseBlending = false;
         releaseStartPoses.Clear();
     }
 
     private void OnDestroy()
     {
+        if (heldShepherd == this)
+            heldShepherd = null;
+
         DestroyRuntimeHelper(heldCollisionProbeObject);
         DestroyRuntimeHelper(heldPantingSamplerRoot);
     }
@@ -459,10 +476,12 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
     private void GrabShepherd()
     {
-        if (holding || neckGrabBone == null || skinnedRenderer == null)
+        if (holding || IsAnyDogHeld || FetchBallInteraction.IsAnyBallHeldByPlayer ||
+            neckGrabBone == null || skinnedRenderer == null)
             return;
 
         holding = true;
+        heldShepherd = this;
         rootVelocity = Vector3.zero;
         grabTargetVelocity = Vector3.zero;
         heldPoseBlend = 0f;
@@ -517,6 +536,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
         if (shepherdAI != null)
         {
+            shepherdAI.NotifyGrabStarted();
             aiWasEnabled = shepherdAI.enabled;
             shepherdAI.enabled = false;
         }
@@ -605,6 +625,8 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         }
 
         holding = false;
+        if (heldShepherd == this)
+            heldShepherd = null;
         liftingTransition = false;
         loweringTransition = false;
         liftTransitionProgress = 1f;
