@@ -32,10 +32,12 @@ public sealed class FetchBallInteraction : MonoBehaviour
     [SerializeField] private ShepherdCompanionAI companionAI;
 
     [Header("Recovery")]
-    [Tooltip("공이 이 높이보다 아래로 떨어지면 맵 중앙의 안전한 바닥으로 되돌립니다.")]
+    [Tooltip("공이 이 높이보다 아래로 떨어지면 마지막 XZ 위치에 가까운 안전한 바닥으로 되돌립니다.")]
     [SerializeField] private float minimumValidWorldY = -0.75f;
-    [Tooltip("맵 중앙에서 이 거리보다 멀어진 공을 이탈한 것으로 판단합니다.")]
+    [Tooltip("직사각형 경계가 비활성화된 경우 사용하는 원형 안전 반경입니다.")]
     [SerializeField, Min(1f)] private float maximumDistanceFromMapCenter = 7.35f;
+    [Tooltip("맵 중앙에서 X/Z축 방향으로 공이 움직일 수 있는 범위입니다. PlayScene의 플레이어 이동 경계와 같은 값입니다.")]
+    [SerializeField] private Vector2 playableAreaHalfExtents = new Vector2(4.55f, 4.55f);
     [SerializeField] private Vector3 mapCenter = Vector3.zero;
     [SerializeField, Min(0.5f)] private float recoveryFloorProbeHeight = 3f;
 
@@ -100,9 +102,19 @@ public sealed class FetchBallInteraction : MonoBehaviour
     {
         ResolveReferences();
 
-        if (!heldByPlayer && !carriedByDog && !dogMouthCaptureInProgress && IsOutsidePlayableArea())
+        if (!heldByPlayer && !carriedByDog && !dogMouthCaptureInProgress &&
+            transform.position.y < minimumValidWorldY)
         {
-            RecoverToFloor(mapCenter);
+            // 완전히 바닥 아래로 빠졌을 때만 위치 복구를 사용합니다. 정상적으로
+            // 날아가는 공을 중앙으로 순간 이동시키지 않도록 마지막 XZ 위치를
+            // 최대한 유지합니다.
+            RecoverToFloor(GetNearestPlayablePlanarPosition(transform.position));
+            return;
+        }
+
+        if (!heldByPlayer && !carriedByDog && !dogMouthCaptureInProgress &&
+            BounceOffPlayableBoundary())
+        {
             return;
         }
 
@@ -427,6 +439,27 @@ public sealed class FetchBallInteraction : MonoBehaviour
             companionAI.BeginChasingThrownBall(this);
     }
 
+    /// <summary>
+    /// 정체된 공을 순간 이동시키지 않고 목표 쪽으로 짧게 튕겨 다시 도달할 수 있게 합니다.
+    /// </summary>
+    public void NudgeToward(Vector3 targetPosition, float speed)
+    {
+        if (heldByPlayer || carriedByDog || dogMouthCaptureInProgress || ballBody == null)
+            return;
+
+        Vector3 direction = targetPosition - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude <= 0.0001f)
+            direction = -transform.forward;
+
+        direction.Normalize();
+        RestoreOriginalParent();
+        ConfigureFreePhysics();
+        ballBody.linearVelocity = direction * Mathf.Max(0.5f, speed) + Vector3.up * 0.45f;
+        ballBody.angularVelocity = Vector3.Cross(Vector3.up, direction) * (throwSpin * 0.35f);
+        lastThrowTime = Time.time;
+    }
+
     private void RestoreOriginalParent()
     {
         if (transform.parent != originalParent)
@@ -483,15 +516,59 @@ public sealed class FetchBallInteraction : MonoBehaviour
         return radius;
     }
 
-    private bool IsOutsidePlayableArea()
+    private bool BounceOffPlayableBoundary()
     {
-        if (transform.position.y < minimumValidWorldY)
-            return true;
-
         Vector3 planarOffset = transform.position - mapCenter;
         planarOffset.y = 0f;
-        return planarOffset.sqrMagnitude >
-               maximumDistanceFromMapCenter * maximumDistanceFromMapCenter;
+        float radius = GetCollisionRadius();
+        Vector2 halfExtents = GetPlayableHalfExtents();
+        float xLimit = Mathf.Max(0.25f, halfExtents.x - radius);
+        float zLimit = Mathf.Max(0.25f, halfExtents.y - radius);
+        bool hitX = Mathf.Abs(planarOffset.x) > xLimit;
+        bool hitZ = Mathf.Abs(planarOffset.z) > zLimit;
+        if (!hitX && !hitZ)
+            return false;
+
+        Vector3 clampedPosition = transform.position;
+        clampedPosition.x = mapCenter.x + Mathf.Clamp(planarOffset.x, -xLimit, xLimit);
+        clampedPosition.z = mapCenter.z + Mathf.Clamp(planarOffset.z, -zLimit, zLimit);
+        ballBody.position = clampedPosition;
+
+        Vector3 velocity = ballBody.linearVelocity;
+        float restitution = Mathf.Clamp01(bounciness);
+        if (hitX && Mathf.Sign(velocity.x) == Mathf.Sign(planarOffset.x))
+            velocity.x = -velocity.x * restitution;
+        if (hitZ && Mathf.Sign(velocity.z) == Mathf.Sign(planarOffset.z))
+            velocity.z = -velocity.z * restitution;
+
+        ballBody.linearVelocity = velocity;
+        return true;
+    }
+
+    private Vector3 GetNearestPlayablePlanarPosition(Vector3 position)
+    {
+        Vector3 planarOffset = position - mapCenter;
+        planarOffset.y = 0f;
+        float radius = GetCollisionRadius();
+        Vector2 halfExtents = GetPlayableHalfExtents();
+        float xLimit = Mathf.Max(0.25f, halfExtents.x - radius);
+        float zLimit = Mathf.Max(0.25f, halfExtents.y - radius);
+
+        return new Vector3(
+            mapCenter.x + Mathf.Clamp(planarOffset.x, -xLimit, xLimit),
+            mapCenter.y,
+            mapCenter.z + Mathf.Clamp(planarOffset.z, -zLimit, zLimit));
+    }
+
+    private Vector2 GetPlayableHalfExtents()
+    {
+        if (playableAreaHalfExtents.x > 0.25f && playableAreaHalfExtents.y > 0.25f)
+            return playableAreaHalfExtents;
+
+        float fallbackExtent = Mathf.Max(
+            0.5f,
+            maximumDistanceFromMapCenter / Mathf.Sqrt(2f));
+        return new Vector2(fallbackExtent, fallbackExtent);
     }
 
     private Vector3 FindRecoveryFloorPosition(Vector3 preferredPosition)

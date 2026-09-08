@@ -97,6 +97,9 @@ public sealed class AdoptionIntroController : MonoBehaviour
     private string currentPreviewIdleState;
     private bool applyingSanitizedText;
     private bool transitionStarted;
+    private string lastValidatedVisibleName;
+    private Keyboard imeKeyboard;
+    private string imeCompositionText = string.Empty;
 
     public static bool HasCompletedAdoption =>
         PlayerPrefs.GetInt(AdoptionCompletedKey, 0) == 1;
@@ -114,6 +117,12 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
         PreparePreviewDog();
         CreateInterface();
+        BindImeKeyboard();
+    }
+
+    private void OnDisable()
+    {
+        UnbindImeKeyboard();
     }
 
     private IEnumerator Start()
@@ -131,11 +140,18 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
     private void Update()
     {
-        if (transitionStarted || nameInput == null || Keyboard.current == null)
+        if (transitionStarted || nameInput == null)
+            return;
+
+        BindImeKeyboard();
+        RefreshNameValidation();
+
+        if (Keyboard.current == null)
             return;
 
         if ((Keyboard.current.enterKey.wasPressedThisFrame ||
              Keyboard.current.numpadEnterKey.wasPressedThisFrame) &&
+            string.IsNullOrEmpty(imeCompositionText) &&
             confirmButton != null && confirmButton.interactable)
         {
             ConfirmAdoption();
@@ -183,7 +199,59 @@ public sealed class AdoptionIntroController : MonoBehaviour
             applyingSanitizedText = false;
         }
 
-        UpdateConfirmAvailability(sanitized);
+        RefreshNameValidation(true);
+    }
+
+    private void RefreshNameValidation(bool force = false)
+    {
+        string visibleName = GetVisibleNameForValidation();
+        if (!force && visibleName == lastValidatedVisibleName)
+            return;
+
+        lastValidatedVisibleName = visibleName;
+        UpdateConfirmAvailability(visibleName);
+    }
+
+    private string GetVisibleNameForValidation()
+    {
+        string committedText = SanitizeName(nameInput != null ? nameInput.text : string.Empty);
+        string compositionText = SanitizeName(imeCompositionText);
+        if (string.IsNullOrEmpty(compositionText) || nameInput == null || !nameInput.isFocused)
+            return committedText;
+
+        // Unity UI keeps the active IME syllable outside InputField.text until the
+        // composition is committed. Insert it at the caret so Korean input updates
+        // the counter and button on the same frame as the visible text.
+        int insertionIndex = Mathf.Clamp(nameInput.caretPosition, 0, committedText.Length);
+        return committedText.Insert(insertionIndex, compositionText);
+    }
+
+    private void BindImeKeyboard()
+    {
+        Keyboard currentKeyboard = Keyboard.current;
+        if (imeKeyboard == currentKeyboard)
+            return;
+
+        UnbindImeKeyboard();
+        imeKeyboard = currentKeyboard;
+        if (imeKeyboard != null)
+            imeKeyboard.onIMECompositionChange += OnImeCompositionChanged;
+    }
+
+    private void UnbindImeKeyboard()
+    {
+        if (imeKeyboard != null)
+            imeKeyboard.onIMECompositionChange -= OnImeCompositionChanged;
+
+        imeKeyboard = null;
+        imeCompositionText = string.Empty;
+    }
+
+    private void OnImeCompositionChanged(
+        UnityEngine.InputSystem.LowLevel.IMECompositionString composition)
+    {
+        imeCompositionText = composition.ToString();
+        RefreshNameValidation(true);
     }
 
     private void UpdateConfirmAvailability(string value)
