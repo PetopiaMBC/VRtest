@@ -73,6 +73,12 @@ public sealed class AdoptionIntroController : MonoBehaviour
     [SerializeField] private Font regularInterfaceFont;
     [SerializeField] private Font boldInterfaceFont;
 
+    [Header("Background")]
+    [SerializeField] private Texture2D adoptionBackgroundTexture;
+    [SerializeField, Min(1f)] private float backgroundZoom = 1.18f;
+    [SerializeField] private Vector2 backgroundUvOffset = new Vector2(0.025f, 0.08f);
+    [SerializeField, Min(1f)] private float backgroundDistance = 20f;
+
     private static readonly Color Cocoa = new Color(0.30f, 0.16f, 0.11f);
     private static readonly Color MutedCocoa = new Color(0.43f, 0.32f, 0.26f);
     private static readonly Color Cream = new Color(1f, 0.975f, 0.91f, 0.985f);
@@ -100,6 +106,10 @@ public sealed class AdoptionIntroController : MonoBehaviour
     private string lastValidatedVisibleName;
     private Keyboard imeKeyboard;
     private string imeCompositionText = string.Empty;
+    private GameObject backgroundObject;
+    private Material backgroundMaterial;
+    private Camera backgroundCamera;
+    private float lastBackgroundAspect = -1f;
 
     public static bool HasCompletedAdoption =>
         PlayerPrefs.GetInt(AdoptionCompletedKey, 0) == 1;
@@ -115,6 +125,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
             return;
         }
 
+        PrepareBackground();
         PreparePreviewDog();
         CreateInterface();
         BindImeKeyboard();
@@ -123,6 +134,12 @@ public sealed class AdoptionIntroController : MonoBehaviour
     private void OnDisable()
     {
         UnbindImeKeyboard();
+    }
+
+    private void OnDestroy()
+    {
+        if (backgroundMaterial != null)
+            Destroy(backgroundMaterial);
     }
 
     private IEnumerator Start()
@@ -143,6 +160,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
         if (transitionStarted || nameInput == null)
             return;
 
+        UpdateBackgroundLayout();
         BindImeKeyboard();
         RefreshNameValidation();
 
@@ -513,6 +531,99 @@ public sealed class AdoptionIntroController : MonoBehaviour
             previewAnimator.CrossFadeInFixedTime(previewIdleState, 0.05f);
         }
 
+    }
+
+    private void PrepareBackground()
+    {
+        if (adoptionBackgroundTexture == null)
+            return;
+
+        backgroundCamera = Camera.main;
+        if (backgroundCamera == null)
+            backgroundCamera = FindFirstObjectByType<Camera>();
+        if (backgroundCamera == null)
+            return;
+
+        backgroundObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        backgroundObject.name = "Adoption Background";
+        backgroundObject.transform.SetParent(backgroundCamera.transform, false);
+
+        Collider backgroundCollider = backgroundObject.GetComponent<Collider>();
+        if (backgroundCollider != null)
+            Destroy(backgroundCollider);
+
+        Shader backgroundShader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (backgroundShader == null)
+            backgroundShader = Shader.Find("Unlit/Texture");
+        if (backgroundShader == null)
+        {
+            Destroy(backgroundObject);
+            backgroundObject = null;
+            return;
+        }
+
+        backgroundMaterial = new Material(backgroundShader)
+        {
+            name = "Adoption Background Material (Runtime)",
+            mainTexture = adoptionBackgroundTexture
+        };
+        if (backgroundMaterial.HasProperty("_BaseMap"))
+            backgroundMaterial.SetTexture("_BaseMap", adoptionBackgroundTexture);
+        if (backgroundMaterial.HasProperty("_BaseColor"))
+            backgroundMaterial.SetColor("_BaseColor", Color.white);
+
+        MeshRenderer renderer = backgroundObject.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = backgroundMaterial;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        renderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+        renderer.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+
+        adoptionBackgroundTexture.wrapMode = TextureWrapMode.Clamp;
+        UpdateBackgroundLayout(true);
+    }
+
+    private void UpdateBackgroundLayout(bool force = false)
+    {
+        if (backgroundObject == null || backgroundCamera == null ||
+            backgroundMaterial == null || adoptionBackgroundTexture == null)
+            return;
+
+        float viewportAspect = Mathf.Max(0.01f, backgroundCamera.aspect);
+        if (!force && Mathf.Abs(viewportAspect - lastBackgroundAspect) < 0.0001f)
+            return;
+
+        lastBackgroundAspect = viewportAspect;
+        float distance = Mathf.Clamp(
+            backgroundDistance,
+            backgroundCamera.nearClipPlane + 0.5f,
+            backgroundCamera.farClipPlane - 1f);
+        float height = 2f * distance * Mathf.Tan(
+            backgroundCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+        float width = height * viewportAspect;
+
+        Transform backgroundTransform = backgroundObject.transform;
+        backgroundTransform.localPosition = new Vector3(0f, 0f, distance);
+        backgroundTransform.localRotation = Quaternion.identity;
+        backgroundTransform.localScale = new Vector3(width * 1.01f, height * 1.01f, 1f);
+
+        float textureAspect = (float)adoptionBackgroundTexture.width /
+                              Mathf.Max(1, adoptionBackgroundTexture.height);
+        Vector2 uvScale = Vector2.one;
+        if (textureAspect > viewportAspect)
+            uvScale.x = viewportAspect / textureAspect;
+        else
+            uvScale.y = textureAspect / viewportAspect;
+
+        uvScale /= Mathf.Max(1f, backgroundZoom);
+        Vector2 uvOffset = (Vector2.one - uvScale) * 0.5f + backgroundUvOffset;
+        backgroundMaterial.mainTextureScale = uvScale;
+        backgroundMaterial.mainTextureOffset = uvOffset;
+        if (backgroundMaterial.HasProperty("_BaseMap"))
+        {
+            backgroundMaterial.SetTextureScale("_BaseMap", uvScale);
+            backgroundMaterial.SetTextureOffset("_BaseMap", uvOffset);
+        }
     }
 
     private void CreateInterface()

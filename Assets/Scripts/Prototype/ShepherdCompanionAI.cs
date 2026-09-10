@@ -87,6 +87,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Range(5f, 55f)] private float headPitchLimit = 38f;
     [Tooltip("고개가 목표를 향해 돌아가는 속도입니다. 값이 클수록 빠르게 바라봅니다.")]
     [SerializeField, Min(0f)] private float headTurnSpeed = 7f;
+    [Tooltip("How long the dog keeps its last gaze after losing the look target.")]
+    [SerializeField, Min(0f)] private float headLookReturnDelay = 0.12f;
+    [Tooltip("How smoothly the head returns to the animation pose after losing the look target.")]
+    [SerializeField, Min(0.1f)] private float headLookReturnSpeed = 3.2f;
     [Tooltip("들고 있는 공의 움직임을 머리가 따라가는 전용 반응 속도입니다.")]
     [SerializeField, Min(0f)] private float heldBallHeadTurnSpeed = 15f;
     [Tooltip("플레이어가 든 공을 볼 때 목과 머리가 사용할 수 있는 좌우 회전 범위입니다.")]
@@ -346,6 +350,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private Vector3 headLocalMuzzleForward;
     private float smoothedHeadYaw;
     private float smoothedHeadPitch;
+    private float headLookReturnElapsed;
+    private bool headLookReturnActive;
     private float sustainedLargeLookTime;
     private Vector3 homePosition;
     private Vector3 wanderTarget;
@@ -984,10 +990,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         else if (playerInRange && CanLookAtPlayerWithoutFightingMovement())
             UpdateHeadLook();
         else
-        {
-            smoothedHeadYaw = 0f;
-            smoothedHeadPitch = 0f;
-        }
+            UpdateHeadLookReturn();
 
         // Animator와 고개 보정이 모두 끝난 최종 입 위치를 사용합니다.
         // 공 쪽 LateUpdate에서 갱신하면 실행 순서에 따라 한 프레임 늦거나 옆으로 밀릴 수 있습니다.
@@ -3081,6 +3084,14 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return;
         }
 
+        if (FinishIdleAnimationBeforeMovement())
+        {
+            movementUsesRunAnimation = false;
+            turnAnimationActive = false;
+            currentMoveSpeed = 0f;
+            return;
+        }
+
         if (!followAnimationModeInitialized)
         {
             // 플레이어를 처음 인식한 순간에는 현재 거리로 걷기, 트롯, 달리기 상태를 정합니다.
@@ -3684,11 +3695,17 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void UpdateHeadLook()
     {
-        UpdateHeadLookAt(GetPlayerPosition());
+        headLookReturnActive = true;
+        UpdateHeadLookAt(
+            GetPlayerPosition(),
+            headYawLimit,
+            headPitchLimit,
+            false);
     }
 
     private void UpdateHeadLookAt(Vector3 targetPosition)
     {
+        headLookReturnActive = false;
         UpdateHeadLookAt(targetPosition, headYawLimit, headPitchLimit, false);
     }
 
@@ -3699,6 +3716,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         bool stabilizeMuzzle,
         float stabilizationWeight = 1f)
     {
+        if (stabilizeMuzzle)
+            headLookReturnActive = false;
+
         if (headBone == null && neckBone == null)
             return;
 
@@ -3711,6 +3731,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             fullTargetDirection.sqrMagnitude < 0.0001f)
             return;
 
+        headLookReturnElapsed = 0f;
         float horizontalDistance = Mathf.Max(0.001f, targetDirection.magnitude);
         targetDirection.Normalize();
         float signedYaw = Vector3.SignedAngle(transform.forward, targetDirection, Vector3.up);
@@ -3742,6 +3763,43 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         // 뼈의 월드 회전을 목표 회전으로 직접 덮어쓰면 얼굴 정면축이 +Z가 아닌 리그에서
         // 애니메이터 포즈와 서로 반대 방향으로 보정되어 좌우 플립이 발생합니다.
         // 현재 애니메이션 포즈에 월드 Y축 회전량만 분배해 더하면 리그 축을 그대로 보존합니다.
+        ApplyHeadLookOffsets();
+    }
+
+    private void UpdateHeadLookReturn()
+    {
+        if (!headLookReturnActive || (headBone == null && neckBone == null))
+        {
+            smoothedHeadYaw = 0f;
+            smoothedHeadPitch = 0f;
+            headLookReturnElapsed = 0f;
+            return;
+        }
+
+        headLookReturnElapsed += Time.deltaTime;
+        if (headLookReturnElapsed > headLookReturnDelay)
+        {
+            float blend = 1f - Mathf.Exp(-headLookReturnSpeed * Time.deltaTime);
+            smoothedHeadYaw = Mathf.LerpAngle(smoothedHeadYaw, 0f, blend);
+            smoothedHeadPitch = Mathf.LerpAngle(smoothedHeadPitch, 0f, blend);
+
+            if (Mathf.Abs(Mathf.DeltaAngle(smoothedHeadYaw, 0f)) < 0.05f)
+                smoothedHeadYaw = 0f;
+            if (Mathf.Abs(Mathf.DeltaAngle(smoothedHeadPitch, 0f)) < 0.05f)
+                smoothedHeadPitch = 0f;
+        }
+
+        ApplyHeadLookOffsets();
+
+        if (smoothedHeadYaw == 0f && smoothedHeadPitch == 0f)
+        {
+            headLookReturnActive = false;
+            headLookReturnElapsed = 0f;
+        }
+    }
+
+    private void ApplyHeadLookOffsets()
+    {
         float neckShare = headBone != null ? 0.35f : 1f;
         float headShare = neckBone != null ? 0.65f : 1f;
         if (neckBone != null)
@@ -3817,6 +3875,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return false;
 
         if (state != BrainState.FollowPlayer)
+            return true;
+
+        // While a non-locomotion animation is finishing, keep following the
+        // player's movement with the head instead of dropping the gaze at the
+        // stop-distance boundary.
+        if (currentMoveSpeed <= 0.001f && IsConfiguredIdleState(currentAnimation))
             return true;
 
         Vector3 toPlayer = GetPlayerPosition() - transform.position;
@@ -4445,6 +4509,49 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         ResetActiveIdleSequence();
         currentAnimation = null;
+        return false;
+    }
+
+    private bool FinishIdleAnimationBeforeMovement()
+    {
+        if (activeIdleSequenceRequiresStandUp ||
+            string.IsNullOrEmpty(currentIdleState) ||
+            currentIdleState == idleBreathingState ||
+            currentAnimation != currentIdleState ||
+            !IsConfiguredIdleState(currentIdleState))
+            return false;
+
+        // Never hold movement forever if another system has already replaced the
+        // expected idle state without updating the idle sequence bookkeeping.
+        if (!IsAnimatorInRequestedState(currentIdleState))
+        {
+            ResetActiveIdleSequence();
+            return false;
+        }
+
+        if (idleSequencePhase == IdleSequencePhase.End)
+        {
+            if (!IsAnimationCycleFinished(currentIdleState))
+                return true;
+
+            ResetActiveIdleSequence();
+            return false;
+        }
+
+        if (!IsAnimationAtNaturalTransitionPoint(currentIdleState))
+            return true;
+
+        if ((idleSequencePhase == IdleSequencePhase.Start ||
+             idleSequencePhase == IdleSequencePhase.Loop) &&
+            !string.IsNullOrEmpty(activeIdleSequenceEndState))
+        {
+            idleSequencePhase = IdleSequencePhase.End;
+            currentIdleState = activeIdleSequenceEndState;
+            PlayAnimationFromBeginning(currentIdleState);
+            return true;
+        }
+
+        ResetActiveIdleSequence();
         return false;
     }
 

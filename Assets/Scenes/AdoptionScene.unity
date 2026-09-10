@@ -446,6 +446,10 @@ MonoBehaviour:
   previewRestDurationRange: {x: 3, y: 5.5}
   regularInterfaceFont: {fileID: 12800000, guid: 54b5929d81291c143954077a17195519, type: 3}
   boldInterfaceFont: {fileID: 12800000, guid: bd758c0a349ed044cba40dc1e5c31fe0, type: 3}
+  adoptionBackgroundTexture: {fileID: 2800000, guid: a224cf2386297ca429f04638781031b7, type: 3}
+  backgroundZoom: 1.18
+  backgroundUvOffset: {x: 0.025, y: 0.08}
+  backgroundDistance: 20
 --- !u!4 &2141123404
 Transform:
   m_ObjectHideFlags: 0
