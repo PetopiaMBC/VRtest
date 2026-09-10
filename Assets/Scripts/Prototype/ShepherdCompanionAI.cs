@@ -60,7 +60,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private enum PettingPhase
     {
         None,
-        LookingAtPlayer,
         Enjoying,
         SettlingRestPose,
         SettlingCurrentIdle,
@@ -217,11 +216,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [Tooltip("플레이어가 이 거리 안에서 강아지를 바라봐야 쓰다듬기를 시작할 수 있습니다.")]
     [SerializeField, Range(0.6f, 2f)] private float pettingDistance = 1.35f;
     [SerializeField, Range(3f, 35f)] private float pettingLookAngle = 18f;
-    [Tooltip("F 입력 후 현재 전신 애니메이션 위에 쓰다듬기 반응을 겹치기 전 시선을 맞추는 짧은 시간입니다.")]
-    [SerializeField, Range(0.05f, 0.5f)] private float pettingLookSettleDuration = 0.12f;
     [SerializeField, Range(1.5f, 6f)] private float pettingDuration = 3.4f;
     [SerializeField, Range(1, 5)] private int pettingHeadTiltCycles = 3;
     [SerializeField, Range(3f, 25f)] private float pettingHeadTiltAngle = 13f;
+    [Tooltip("쓰다듬기 종료 때 전신 애니메이션을 부드럽게 풀어 주는 시간입니다.")]
+    [SerializeField, Range(0.2f, 0.8f)] private float pettingReleaseBlendDuration = 0.45f;
     [Tooltip("열린 눈꺼풀 기준으로 감긴 눈 자세까지의 로컬 X 회전량입니다. 시바견 수면 애니메이션에서 측정한 값입니다.")]
     [SerializeField, Range(-80f, -20f)] private float pettingEyelidCloseOffset = -56.2f;
     [SerializeField, Range(1, 10)] private int minimumPettingHearts = 3;
@@ -430,6 +429,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private float pettingElapsed;
     private float pettingHeadReleaseElapsed;
     private bool pettingPreservesCurrentPose;
+    private string pettingStartIdleState;
+    private float pettingStartIdleNormalizedTime;
+    private bool pettingStartIdleProgressCaptured;
+    private int pettingInterruptedIdleChoice = -1;
     private bool automaticMealQueued;
     private bool automaticSleepQueued;
     private float invalidPositionElapsed;
@@ -936,44 +939,16 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (pettingPhase == PettingPhase.LookingAtPlayer ||
-            pettingPhase == PettingPhase.Enjoying)
+        if (pettingPhase == PettingPhase.Enjoying)
         {
-            float lookElapsed = pettingPhase == PettingPhase.LookingAtPlayer
-                ? pettingElapsed
-                : pettingLookSettleDuration + pettingElapsed;
-            float lookBlend = Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.Clamp01(lookElapsed / 0.45f));
-            UpdateHeadLookAt(
-                GetPlayerPosition(),
-                heldBallHeadYawLimit,
-                heldBallHeadPitchLimit,
-                true,
-                lookBlend);
-            if (pettingPhase == PettingPhase.Enjoying)
-                ApplyPettingFacePose();
+            // 현재 전신 애니메이션과 머리 방향은 유지하고,
+            // 눈 감기와 좌우 고개 흔들기만 겹칩니다.
+            ApplyPettingFacePose();
             return;
         }
 
         if (pettingPhase != PettingPhase.None)
-        {
-            float releaseBlend = 1f - Mathf.SmoothStep(
-                0f,
-                1f,
-                Mathf.Clamp01(pettingHeadReleaseElapsed / 0.4f));
-            if (releaseBlend > 0.001f)
-            {
-                UpdateHeadLookAt(
-                    GetPlayerPosition(),
-                    heldBallHeadYawLimit,
-                    heldBallHeadPitchLimit,
-                    true,
-                    releaseBlend);
-            }
             return;
-        }
 
         bool trackingPlayerHeldBall = fetchBall != null &&
                                       fetchBall.IsHeldByPlayer &&
@@ -1116,6 +1091,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
              (needsSystem.RequiresImmediateMeal || needsSystem.RequiresSleep)))
             return false;
 
+        CapturePettingIdleProgress();
         whistleResponseActive = false;
         whistleIdleTimeRemaining = 0f;
         obstacleIdleTimeRemaining = 0f;
@@ -1128,7 +1104,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         pettingElapsed = 0f;
         // Keep the current full-body animation and layer the procedural
         // head/eye reaction over it immediately.
-        BeginPettingLookSettle(true);
+        BeginPettingReaction(true);
 
         return true;
     }
@@ -1230,21 +1206,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (pettingPhase == PettingPhase.ReleasingToRandomBehavior)
         {
             pettingHeadReleaseElapsed += Time.deltaTime;
-            if (pettingHeadReleaseElapsed >= 0.4f)
+            if (pettingHeadReleaseElapsed >= Mathf.Max(0.2f, pettingReleaseBlendDuration))
             {
                 pettingPhase = PettingPhase.None;
+                ResetPettingBlendState();
             }
-            return true;
-        }
-
-        if (pettingPhase == PettingPhase.LookingAtPlayer)
-        {
-            currentMoveSpeed = 0f;
-            movementUsesRunAnimation = false;
-            turnAnimationActive = false;
-            pettingElapsed += Time.deltaTime;
-            if (pettingElapsed >= Mathf.Max(0.1f, pettingLookSettleDuration))
-                BeginPettingReaction(pettingPreservesCurrentPose);
             return true;
         }
 
@@ -1282,15 +1248,49 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             Mathf.Max(minimumPettingHearts, maximumPettingHearts));
     }
 
-    private void BeginPettingLookSettle(bool preserveCurrentPose)
+    private void CapturePettingIdleProgress()
     {
-        pettingPreservesCurrentPose = preserveCurrentPose;
-        pettingElapsed = 0f;
-        currentMoveSpeed = 0f;
-        movementUsesRunAnimation = false;
-        turnAnimationActive = false;
-        turnAnimationElapsed = 0f;
-        pettingPhase = PettingPhase.LookingAtPlayer;
+        pettingStartIdleState = null;
+        pettingStartIdleNormalizedTime = 0f;
+        pettingStartIdleProgressCaptured = false;
+        pettingInterruptedIdleChoice = GetIdleChoiceIndex(currentIdleState);
+
+        if (animator == null || animator.IsInTransition(0) ||
+            string.IsNullOrEmpty(currentIdleState) ||
+            currentAnimation != currentIdleState ||
+            !IsConfiguredIdleState(currentIdleState))
+            return;
+
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+        int stateHash = Animator.StringToHash(currentIdleState);
+        if (!stateInfo.IsName(currentIdleState) && stateInfo.shortNameHash != stateHash)
+            return;
+
+        pettingStartIdleState = currentIdleState;
+        pettingStartIdleNormalizedTime = stateInfo.normalizedTime;
+        pettingStartIdleProgressCaptured = true;
+    }
+
+    private bool HasCurrentIdlePassedTransitionDuringPetting()
+    {
+        if (!pettingStartIdleProgressCaptured || animator == null ||
+            animator.IsInTransition(0) ||
+            currentIdleState != pettingStartIdleState)
+            return false;
+
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+        int stateHash = Animator.StringToHash(currentIdleState);
+        if (!stateInfo.IsName(currentIdleState) && stateInfo.shortNameHash != stateHash)
+            return false;
+
+        if (!stateInfo.loop)
+            return stateInfo.normalizedTime >= 0.98f;
+
+        float startTime = Mathf.Max(0f, pettingStartIdleNormalizedTime);
+        float startCycle = Mathf.Floor(startTime);
+        float startPhase = Mathf.Repeat(startTime, 1f);
+        float nextNaturalTransition = startCycle + (startPhase < 0.92f ? 0.92f : 1.92f);
+        return stateInfo.normalizedTime >= nextNaturalTransition;
     }
 
     private void CompletePettingReaction()
@@ -1306,7 +1306,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (TryBeginNaturalRestExitAfterPetting())
             return;
 
-        if (CanFinishCurrentIdleNaturallyAfterPetting())
+        // 쓰다듬는 동안 이미 자연 종료 지점을 지났다면 다음 루프 끝을
+        // 다시 기다리지 않아 같은 동작이 반복되는 느낌을 막습니다.
+        if (CanFinishCurrentIdleNaturallyAfterPetting() &&
+            !HasCurrentIdlePassedTransitionDuringPetting())
         {
             pettingPhase = PettingPhase.SettlingCurrentIdle;
             pettingElapsed = 0f;
@@ -1330,6 +1333,13 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (!activeIdleSequenceRequiresStandUp ||
             idleSequencePhase == IdleSequencePhase.None)
             return false;
+
+        if (idleSequencePhase != IdleSequencePhase.End &&
+            HasCurrentIdlePassedTransitionDuringPetting())
+        {
+            BeginStandingUpAfterPetting();
+            return true;
+        }
 
         if (idleSequencePhase == IdleSequencePhase.End)
         {
@@ -1372,7 +1382,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         idleSequencePhase = IdleSequencePhase.End;
         currentIdleState = activeIdleSequenceEndState;
         pettingPhase = PettingPhase.StandingUpAfterPetting;
-        PlayAnimationFromBeginning(currentIdleState);
+        PlayAnimationFromBeginning(currentIdleState, pettingReleaseBlendDuration);
     }
 
     private void StartCalmIdleAfterPetting()
@@ -1390,9 +1400,13 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         // 쓰다듬기 종료 직후 다른 랜덤 전신 포즈를 강제로 시작하면 현재 포즈와
         // 무관한 자세로 튀어 보입니다. 현재 애니메이션을 기준으로 기본 호흡
-        // 자세에 크로스페이드하고, LateUpdate의 머리 보정은 별도로 천천히 풉니다.
-        PlayAnimation(idleBreathingState);
+        // 자세에 긴 크로스페이드로 돌아가 끊김을 줄입니다.
+        PlayAnimation(idleBreathingState, pettingReleaseBlendDuration);
         currentIdleState = idleBreathingState;
+        int calmIdleChoice = GetIdleChoiceIndex(idleBreathingState);
+        if (calmIdleChoice >= 0)
+            lastIdleChoice = calmIdleChoice;
+        lastIdleWasRestPose = false;
 
         pettingPhase = PettingPhase.ReleasingToRandomBehavior;
         pettingElapsed = 0f;
@@ -1402,6 +1416,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         pettingHeadReleaseElapsed = 0f;
         pettingPreservesCurrentPose = false;
+        pettingStartIdleState = null;
+        pettingStartIdleNormalizedTime = 0f;
+        pettingStartIdleProgressCaptured = false;
     }
 
     private void ApplyPettingFacePose()
@@ -4105,6 +4122,11 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void PlayAnimation(string stateName)
     {
+        PlayAnimation(stateName, animationBlendTime);
+    }
+
+    private void PlayAnimation(string stateName, float fixedBlendDuration)
+    {
         if (animator == null || string.IsNullOrEmpty(stateName))
             return;
 
@@ -4135,13 +4157,21 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         }
         else
         {
-            animator.CrossFadeInFixedTime(stateName, animationBlendTime, 0);
+            animator.CrossFadeInFixedTime(
+                stateName,
+                Mathf.Max(0.01f, fixedBlendDuration),
+                0);
         }
 
         currentAnimation = stateName;
     }
 
     private void PlayAnimationFromBeginning(string stateName)
+    {
+        PlayAnimationFromBeginning(stateName, animationBlendTime);
+    }
+
+    private void PlayAnimationFromBeginning(string stateName, float fixedBlendDuration)
     {
         if (animator == null || string.IsNullOrEmpty(stateName))
             return;
@@ -4157,7 +4187,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         animator.CrossFadeInFixedTime(
             stateName,
-            animationBlendTime,
+            Mathf.Max(0.01f, fixedBlendDuration),
             0,
             0f);
         currentAnimation = stateName;
@@ -4279,6 +4309,33 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         return count;
     }
 
+    private int GetIdleChoiceIndex(string stateName)
+    {
+        if (string.IsNullOrEmpty(stateName))
+            return -1;
+
+        int validIndex = 0;
+        if (idleStates != null)
+        {
+            for (int i = 0; i < idleStates.Length; i++)
+            {
+                if (string.IsNullOrEmpty(idleStates[i]))
+                    continue;
+                if (idleStates[i] == stateName)
+                    return validIndex;
+                validIndex++;
+            }
+        }
+
+        if (HasIdleSequence() &&
+            (stateName == idleSequenceStartState ||
+             stateName == idleSequenceLoopState ||
+             stateName == idleSequenceEndState))
+            return validIndex;
+
+        return -1;
+    }
+
     private bool HasRestIdleSequence()
     {
         return HasCompleteIdleSequence(
@@ -4339,14 +4396,41 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         int choiceCount = regularCount + (HasIdleSequence() ? 1 : 0);
         if (choiceCount <= 0)
         {
+            pettingInterruptedIdleChoice = -1;
             PlayAnimation(idleBreathingState);
             return;
         }
 
-        int choice = Random.Range(0, choiceCount);
-        if (choiceCount > 1 && choice == lastIdleChoice)
-            choice = (choice + Random.Range(1, choiceCount)) % choiceCount;
+        int availableChoiceCount = 0;
+        for (int i = 0; i < choiceCount; i++)
+        {
+            if (i != lastIdleChoice && i != pettingInterruptedIdleChoice)
+                availableChoiceCount++;
+        }
+
+        int choice;
+        if (availableChoiceCount > 0)
+        {
+            int availableIndex = Random.Range(0, availableChoiceCount);
+            choice = 0;
+            for (int i = 0; i < choiceCount; i++)
+            {
+                if (i == lastIdleChoice || i == pettingInterruptedIdleChoice)
+                    continue;
+                if (availableIndex-- == 0)
+                {
+                    choice = i;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            choice = Random.Range(0, choiceCount);
+        }
+
         lastIdleChoice = choice;
+        pettingInterruptedIdleChoice = -1;
 
         if (choice >= regularCount)
         {
@@ -4414,6 +4498,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         lastIdleWasRestPose = true;
         lastIdleChoice = -1;
+        pettingInterruptedIdleChoice = -1;
         return true;
     }
 
