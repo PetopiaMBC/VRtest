@@ -8,7 +8,7 @@ PlayerSettings:
   AndroidProfiler: 0
   AndroidFilterTouchesWhenObscured: 0
   AndroidEnableSustainedPerformanceMode: 0
-  defaultScreenOrientation: 4
+  defaultScreenOrientation: 3
   targetDevice: 2
   useOnDemandResources: 0
   accelerometerFrequency: 60
@@ -146,10 +146,7 @@ PlayerSettings:
   tvOSBundleVersion: 1.0
   bundleVersion: 1.0
   preloadedAssets:
-  - {fileID: 0}
-  - {fileID: 9030113687040111788, guid: 4b3de149e50ea0c4f8ad04c79b9f12ec, type: 2}
-  - {fileID: 4226981303226134123, guid: b716680a41c7a094fa3b7fb9a8024a67, type: 2}
-  - {fileID: 11400000, guid: 908d62378b8205449861e5838a18a596, type: 2}
+  - {fileID: 11400000, guid: ef15a864aa7d1dd4aaa604f7b4fca77e, type: 2}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   m_HolographicPauseOnTrackingLoss: 1
@@ -268,7 +265,7 @@ PlayerSettings:
   useCustomMainManifest: 0
   useCustomLauncherManifest: 0
   useCustomMainGradleTemplate: 0
-  useCustomLauncherGradleManifest: 0
+  useCustomLauncherGradleManifest: 1
   useCustomBaseGradleTemplate: 0
   useCustomGradlePropertiesTemplate: 0
   useCustomGradleSettingsTemplate: 0

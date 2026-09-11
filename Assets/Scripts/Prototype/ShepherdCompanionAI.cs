@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
 /// 시바견의 생활 행동, 공놀이, 자동 욕구 행동과 쓰다듬기 반응을 조정합니다.
@@ -111,14 +110,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [Tooltip("비워 두면 Main Camera를 자동으로 사용합니다.")]
     [SerializeField] private Camera playerCamera;
 
-    [Header("휘파람 호출")]
-    [Tooltip("Q 키로 셰퍼드를 불렀을 때 이 거리까지 다가오면 플레이어 앞에서 멈춥니다.")]
-    [SerializeField, Min(0.4f)] private float whistleArrivalDistance = 1.7f;
-    [Tooltip("Q 키로 부른 뒤 플레이어 앞에서 Idle 상태를 유지하는 최소 시간입니다.")]
-    [SerializeField, Min(0.5f)] private float whistleIdleDurationMin = 2f;
-    [Tooltip("Q 키로 부른 뒤 플레이어 앞에서 Idle 상태를 유지하는 최대 시간입니다.")]
-    [SerializeField, Min(0.5f)] private float whistleIdleDurationMax = 3f;
-
     [Header("이동")]
     [Tooltip("셰퍼드가 걷는 속도입니다.")]
     [SerializeField, Min(0.05f)] private float walkSpeed = 0.9f;
@@ -184,13 +175,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private Transform foodBowl;
     [Tooltip("비워 두면 씬의 CT_Dog_bed 오브젝트를 자동으로 찾습니다.")]
     [SerializeField] private Transform sleepSpot;
-    [Tooltip("식사를 요청하는 키입니다.")]
-    [SerializeField] private Key eatKey = Key.E;
     [SerializeField, Min(0.1f)] private float eatingDuration = 10f;
     [Tooltip("식사 자세에서 강아지 루트와 밥그릇 중앙 사이의 거리입니다.")]
     [SerializeField, Min(0.1f)] private float foodStoppingDistance = 0.4f;
-    [Tooltip("수면을 요청하는 키입니다.")]
-    [SerializeField] private Key sleepKey = Key.R;
     [SerializeField, Min(0.1f)] private float sleepingDuration = 30f;
     [Tooltip("침대 앞쪽 입구에서 바깥으로 떨어지는 거리입니다.")]
     [SerializeField, Min(0f)] private float bedEntranceClearance = 0.08f;
@@ -210,17 +197,18 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField] private string sleepLoopState = "Arm_Shiba|Lie_belly_sleep";
     [SerializeField] private string sleepEndState = "Arm_Shiba|Lie_belly_sleep_end";
 
-    [Header("쓰다듬기 테스트")]
-    [Tooltip("VR 손 상호작용을 연결하기 전 사용하는 키보드 테스트 키입니다.")]
-    [SerializeField] private Key pettingKey = Key.F;
-    [Tooltip("플레이어가 이 거리 안에서 강아지를 바라봐야 쓰다듬기를 시작할 수 있습니다.")]
-    [SerializeField, Range(0.6f, 2f)] private float pettingDistance = 1.35f;
-    [SerializeField, Range(3f, 35f)] private float pettingLookAngle = 18f;
+    [Header("쓰다듬기")]
     [SerializeField, Range(1.5f, 6f)] private float pettingDuration = 3.4f;
     [SerializeField, Range(1, 5)] private int pettingHeadTiltCycles = 3;
     [SerializeField, Range(3f, 25f)] private float pettingHeadTiltAngle = 13f;
+    [Tooltip("쓰다듬기 반응이 현재 전신 자세에서 차분한 자세로 녹아드는 시간입니다.")]
+    [SerializeField, Range(0.2f, 0.8f)] private float pettingEntryBlendDuration = 0.4f;
     [Tooltip("쓰다듬기 종료 때 전신 애니메이션을 부드럽게 풀어 주는 시간입니다.")]
-    [SerializeField, Range(0.2f, 0.8f)] private float pettingReleaseBlendDuration = 0.45f;
+    [SerializeField, Range(0.2f, 0.8f)] private float pettingReleaseBlendDuration = 0.6f;
+    [Tooltip("쓰다듬는 동안 플레이어를 따라보는 머리의 최대 좌우 각도입니다.")]
+    [SerializeField, Range(20f, 65f)] private float pettingHeadLookYawLimit = 48f;
+    [Tooltip("쓰다듬는 동안 플레이어를 따라보는 머리의 최대 위아래 각도입니다.")]
+    [SerializeField, Range(10f, 50f)] private float pettingHeadLookPitchLimit = 32f;
     [Tooltip("열린 눈꺼풀 기준으로 감긴 눈 자세까지의 로컬 X 회전량입니다. 시바견 수면 애니메이션에서 측정한 값입니다.")]
     [SerializeField, Range(-80f, -20f)] private float pettingEyelidCloseOffset = -56.2f;
     [SerializeField, Range(1, 10)] private int minimumPettingHearts = 3;
@@ -365,8 +353,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private bool preferRightAvoidance;
     private bool obstacleRepositionActive;
     private Vector3 obstacleRepositionTarget;
-    private bool whistleResponseActive;
-    private float whistleIdleTimeRemaining;
     private bool movementUsesRunAnimation;
     private bool followUsesRunAnimation;
     private bool followUsesTrotAnimation;
@@ -427,6 +413,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private PetNeedsSystem needsSystem;
     private PettingPhase pettingPhase;
     private float pettingElapsed;
+    private float pettingExpressionElapsed;
+    private float pettingFaceBlendWeight;
     private float pettingHeadReleaseElapsed;
     private bool pettingPreservesCurrentPose;
     private string pettingStartIdleState;
@@ -442,6 +430,50 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     public float Hunger => needsSystem != null ? needsSystem.Hunger : PetNeedsSystem.MaximumValue;
     public float Fatigue => needsSystem != null ? needsSystem.Fatigue : PetNeedsSystem.MaximumValue;
     public bool IsBeingPetted => pettingPhase != PettingPhase.None;
+
+    public void ApplyPetSpaceContract(PetSpaceContractSnapshot snapshot, bool applySpawnPose)
+    {
+        if (snapshot.State != PetSpaceContractState.Valid)
+            return;
+
+        if (snapshot.HasWalkArea)
+        {
+            mapRecoveryCenter = snapshot.WalkArea.center;
+            Vector2 planarExtents = new Vector2(
+                Mathf.Max(0.5f, snapshot.WalkArea.extents.x),
+                Mathf.Max(0.5f, snapshot.WalkArea.extents.z));
+            float minimumHalfExtent = Mathf.Min(planarExtents.x, planarExtents.y);
+            // The room contract is rectangular. A radius based on only the
+            // shortest half-extent incorrectly classifies valid room corners as
+            // out of bounds and teleports a returning dog to the center.
+            maximumDistanceFromMapCenter = planarExtents.magnitude + obstacleCheckRadius;
+            wanderRadius = Mathf.Max(0.25f, minimumHalfExtent * 0.85f);
+        }
+        else if (snapshot.HasRecoveryPosition)
+        {
+            mapRecoveryCenter = snapshot.RecoveryPosition.position;
+        }
+
+        if (snapshot.HasSpawnPosition)
+        {
+            homePosition = snapshot.SpawnPosition.position;
+            if (applySpawnPose && (grabInteraction == null || !grabInteraction.IsHolding))
+            {
+                transform.SetPositionAndRotation(
+                    snapshot.SpawnPosition.position,
+                    snapshot.SpawnPosition.rotation);
+            }
+        }
+
+        if (!snapshot.HasWalkArea && snapshot.HasDestinationPosition && snapshot.HasSpawnPosition)
+        {
+            float destinationDistance = Vector3.Distance(
+                snapshot.SpawnPosition.position,
+                snapshot.DestinationPosition.position);
+            wanderRadius = Mathf.Max(0.5f, destinationDistance);
+            maximumDistanceFromMapCenter = Mathf.Max(1f, destinationDistance * 1.5f);
+        }
+    }
 
     #endregion
 
@@ -639,14 +671,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (TryRecoverInvalidPosition())
             return;
 
-        ProcessRoutineHotkeys();
-        ProcessPettingHotkey();
-        // 프로젝트의 활성 입력 방식인 새 Input System으로 휘파람 입력을 읽습니다.
-        if (scheduledRoutinePhase == ScheduledRoutinePhase.None &&
-            !sleepRequested && !mealRequested &&
-            Keyboard.current != null && Keyboard.current.qKey.wasPressedThisFrame)
-            StartWhistleResponse();
-
         obstacleAvoidanceTimeRemaining = Mathf.Max(0f, obstacleAvoidanceTimeRemaining - Time.deltaTime);
         UpdateTurnAnimationProgress();
         playerInRange = IsPlayerInRange();
@@ -715,16 +739,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return;
         }
 
-        if (whistleResponseActive)
-        {
-            // 휘파람 호출 중에는 평소 감지 거리와 관계없이 플레이어의 현재 위치를 계속 추적합니다.
-            playerInRange = true;
-            UpdateWhistleResponse();
-            hadPlayerInRange = playerInRange;
-            KeepOnGround();
-            return;
-        }
-
         if (obstacleIdleTimeRemaining > 0f)
         {
             obstacleIdleTimeRemaining -= Time.deltaTime;
@@ -783,111 +797,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             : turnAnimationResumeState);
     }
 
-    private void UpdateWhistleResponse()
-    {
-        if (obstacleIdleTimeRemaining > 0f)
-        {
-            obstacleIdleTimeRemaining -= Time.deltaTime;
-            turnAnimationActive = false;
-            PlayAnimation(idleBreathingState);
-            return;
-        }
-
-        if (obstacleRepositionActive && obstacleAvoidanceTimeRemaining <= 0f)
-        {
-            if (HasReachedObstacleRepositionTarget())
-                FinishObstacleReposition();
-            else
-            {
-                UpdateObstacleReposition();
-                return;
-            }
-        }
-
-        if (whistleIdleTimeRemaining > 0f)
-        {
-            whistleIdleTimeRemaining -= Time.deltaTime;
-            turnAnimationActive = false;
-            movementUsesRunAnimation = false;
-            currentMoveSpeed = 0f;
-            UpdateStationaryIdleAnimation();
-            FacePlayerWhileIdle();
-
-            if (whistleIdleTimeRemaining <= 0f)
-                FinishWhistleResponse();
-
-            return;
-        }
-
-        Vector3 direction = GetPlayerPosition() - transform.position;
-        direction.y = 0f;
-        float distance = direction.magnitude;
-        if (direction.sqrMagnitude <= 0.0001f)
-        {
-            StartWhistleArrivalIdle();
-            return;
-        }
-
-        if (distance <= whistleArrivalDistance)
-        {
-            StartWhistleArrivalIdle();
-            return;
-        }
-
-        if (FinishRestPoseBeforeMovement())
-        {
-            movementUsesRunAnimation = false;
-            turnAnimationActive = false;
-            currentMoveSpeed = 0f;
-            return;
-        }
-
-        state = BrainState.FollowPlayer;
-        movementUsesRunAnimation = true;
-        if (!turnAnimationActive)
-            PlayAnimation(runState);
-
-        TurnBodyToward(direction.normalized);
-        MoveForward(runSpeed);
-    }
-
-    private void StartWhistleResponse()
-    {
-        whistleResponseActive = true;
-        whistleIdleTimeRemaining = 0f;
-        obstacleIdleTimeRemaining = 0f;
-        obstacleRepositionActive = false;
-        obstacleAvoidanceDirection = Vector3.zero;
-        obstacleAvoidanceTimeRemaining = 0f;
-        turnAnimationActive = false;
-        turnAnimationElapsed = 0f;
-        state = BrainState.FollowPlayer;
-        movementUsesRunAnimation = true;
-    }
-
-    private void StartWhistleArrivalIdle()
-    {
-        state = BrainState.Idle;
-        movementUsesRunAnimation = false;
-        turnAnimationActive = false;
-        whistleIdleTimeRemaining = Random.Range(whistleIdleDurationMin, whistleIdleDurationMax);
-        ResetActiveIdleSequence();
-        UpdateStationaryIdleAnimation();
-        FacePlayerWhileIdle();
-    }
-
-    private void FinishWhistleResponse()
-    {
-        whistleResponseActive = false;
-        whistleIdleTimeRemaining = 0f;
-        obstacleRepositionActive = false;
-        obstacleAvoidanceDirection = Vector3.zero;
-        obstacleAvoidanceTimeRemaining = 0f;
-        turnAnimationActive = false;
-        turnAnimationElapsed = 0f;
-        EnterAmbientState(false);
-    }
-
     private void FacePlayerWhileIdle()
     {
         Vector3 direction = GetPlayerPosition() - transform.position;
@@ -939,16 +848,39 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (pettingPhase == PettingPhase.Enjoying)
+        if (pettingPhase != PettingPhase.None)
         {
-            // 현재 전신 애니메이션과 머리 방향은 유지하고,
-            // 눈 감기와 좌우 고개 흔들기만 겹칩니다.
-            ApplyPettingFacePose();
+            bool isEnjoying = pettingPhase == PettingPhase.Enjoying;
+            float visualBlendDuration = isEnjoying
+                ? Mathf.Max(0.25f, pettingEntryBlendDuration)
+                : Mathf.Max(0.55f, pettingReleaseBlendDuration);
+            pettingFaceBlendWeight = Mathf.MoveTowards(
+                pettingFaceBlendWeight,
+                isEnjoying ? 1f : 0f,
+                Time.deltaTime / visualBlendDuration);
+
+            if (isEnjoying)
+            {
+                // Animator가 만든 자세 위에 머리 추적을 천천히 겹칩니다.
+                // 몸 전체를 즉시 돌리지 않아 손 아래에서 방향이 튀지 않습니다.
+                headLookReturnActive = true;
+                UpdateHeadLookAt(
+                    GetPlayerPosition(),
+                    Mathf.Max(35f, pettingHeadLookYawLimit),
+                    Mathf.Max(24f, pettingHeadLookPitchLimit),
+                    false);
+            }
+            else
+            {
+                // 표정과 같은 구간에 평소 머리 자세도 자연스럽게 복원합니다.
+                headLookReturnActive = true;
+                UpdateHeadLookReturn();
+            }
+
+            if (pettingFaceBlendWeight > 0.001f)
+                ApplyPettingFacePose(pettingFaceBlendWeight);
             return;
         }
-
-        if (pettingPhase != PettingPhase.None)
-            return;
 
         bool trackingPlayerHeldBall = fetchBall != null &&
                                       fetchBall.IsHeldByPlayer &&
@@ -1064,16 +996,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     #region 쓰다듬기
 
-    private void ProcessPettingHotkey()
-    {
-        if (Keyboard.current == null ||
-            !Keyboard.current[pettingKey].wasPressedThisFrame ||
-            !CanPlayerStartKeyboardPetting())
-            return;
-
-        RequestPetting();
-    }
-
     /// <summary>
     /// Starts the shared petting reaction. A future VR hand-contact script can call
     /// this method instead of duplicating the animation and heart behavior.
@@ -1092,8 +1014,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return false;
 
         CapturePettingIdleProgress();
-        whistleResponseActive = false;
-        whistleIdleTimeRemaining = 0f;
         obstacleIdleTimeRemaining = 0f;
         obstacleRepositionActive = false;
         obstacleAvoidanceTimeRemaining = 0f;
@@ -1102,9 +1022,15 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         followUsesTrotAnimation = false;
         followAnimationModeInitialized = false;
         pettingElapsed = 0f;
-        // Keep the current full-body animation and layer the procedural
-        // head/eye reaction over it immediately.
-        BeginPettingReaction(true);
+        // 현재 Idle 자세는 그대로 이어 가고, 걷기/달리기 중이었다면 차분한
+        // 호흡 자세로 크로스페이드한 뒤 표정 반응을 겹칩니다.
+        bool canPreserveCurrentIdlePose = animator != null &&
+                                          !animator.IsInTransition(0) &&
+                                          !string.IsNullOrEmpty(currentIdleState) &&
+                                          currentAnimation == currentIdleState &&
+                                          IsConfiguredIdleState(currentIdleState) &&
+                                          IsAnimatorInRequestedState(currentIdleState);
+        BeginPettingReaction(canPreserveCurrentIdlePose);
 
         return true;
     }
@@ -1116,42 +1042,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         pettingPhase = PettingPhase.None;
         pettingElapsed = 0f;
         ResetPettingBlendState();
-    }
-
-    private bool CanPlayerStartKeyboardPetting()
-    {
-        ResolveReferences();
-        if (playerCamera == null || headBone == null)
-            return false;
-
-        Vector3 viewOrigin = playerCamera.transform.position;
-        Vector3 toFace = headBone.position - viewOrigin;
-        float distance = toFace.magnitude;
-        if (distance <= 0.001f || distance > pettingDistance)
-            return false;
-
-        Vector3 viewDirection = toFace / distance;
-        if (Vector3.Angle(playerCamera.transform.forward, viewDirection) > pettingLookAngle)
-            return false;
-
-        RaycastHit[] hits = Physics.RaycastAll(
-            viewOrigin,
-            viewDirection,
-            distance + 0.25f,
-            Physics.DefaultRaycastLayers,
-            QueryTriggerInteraction.Ignore);
-        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-        for (int i = 0; i < hits.Length; i++)
-        {
-            Collider candidate = hits[i].collider;
-            if (candidate == null || IsPlayerCollider(candidate))
-                continue;
-            return IsOwnCollider(candidate);
-        }
-
-        // The animated mesh collider can be between refreshes. Distance and view-angle
-        // checks still provide a deterministic fallback when the ray meets no collider.
-        return true;
     }
 
     private bool UpdatePetting()
@@ -1206,7 +1096,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (pettingPhase == PettingPhase.ReleasingToRandomBehavior)
         {
             pettingHeadReleaseElapsed += Time.deltaTime;
-            if (pettingHeadReleaseElapsed >= Mathf.Max(0.2f, pettingReleaseBlendDuration))
+            if (pettingHeadReleaseElapsed >= Mathf.Max(0.55f, pettingReleaseBlendDuration))
             {
                 pettingPhase = PettingPhase.None;
                 ResetPettingBlendState();
@@ -1218,6 +1108,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         movementUsesRunAnimation = false;
         turnAnimationActive = false;
         pettingElapsed += Time.deltaTime;
+        pettingExpressionElapsed += Time.deltaTime;
         if (pettingElapsed < Mathf.Max(0.1f, pettingDuration))
             return true;
 
@@ -1229,6 +1120,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         pettingPhase = PettingPhase.Enjoying;
         pettingElapsed = 0f;
+        pettingExpressionElapsed = 0f;
+        pettingFaceBlendWeight = 0f;
         turnAnimationActive = false;
         turnAnimationElapsed = 0f;
         currentMoveSpeed = 0f;
@@ -1238,7 +1131,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (!preserveCurrentPose)
         {
             ResetActiveIdleSequence();
-            PlayAnimationFromBeginning(idleBreathingState);
+            currentIdleState = idleBreathingState;
+            PlayAnimationFromBeginning(
+                idleBreathingState,
+                Mathf.Max(0.3f, pettingEntryBlendDuration));
         }
         needsSystem?.RegisterPetting();
         PetHeartEffect.Play(
@@ -1382,7 +1278,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         idleSequencePhase = IdleSequencePhase.End;
         currentIdleState = activeIdleSequenceEndState;
         pettingPhase = PettingPhase.StandingUpAfterPetting;
-        PlayAnimationFromBeginning(currentIdleState, pettingReleaseBlendDuration);
+        PlayAnimationFromBeginning(
+            currentIdleState,
+            Mathf.Max(0.55f, pettingReleaseBlendDuration));
     }
 
     private void StartCalmIdleAfterPetting()
@@ -1401,7 +1299,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         // 쓰다듬기 종료 직후 다른 랜덤 전신 포즈를 강제로 시작하면 현재 포즈와
         // 무관한 자세로 튀어 보입니다. 현재 애니메이션을 기준으로 기본 호흡
         // 자세에 긴 크로스페이드로 돌아가 끊김을 줄입니다.
-        PlayAnimation(idleBreathingState, pettingReleaseBlendDuration);
+        PlayAnimation(
+            idleBreathingState,
+            Mathf.Max(0.55f, pettingReleaseBlendDuration));
         currentIdleState = idleBreathingState;
         int calmIdleChoice = GetIdleChoiceIndex(idleBreathingState);
         if (calmIdleChoice >= 0)
@@ -1414,6 +1314,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void ResetPettingBlendState()
     {
+        pettingExpressionElapsed = 0f;
+        pettingFaceBlendWeight = 0f;
         pettingHeadReleaseElapsed = 0f;
         pettingPreservesCurrentPose = false;
         pettingStartIdleState = null;
@@ -1421,13 +1323,12 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         pettingStartIdleProgressCaptured = false;
     }
 
-    private void ApplyPettingFacePose()
+    private void ApplyPettingFacePose(float visualBlendWeight)
     {
         float duration = Mathf.Max(0.1f, pettingDuration);
-        float normalizedTime = Mathf.Clamp01(pettingElapsed / duration);
+        float normalizedTime = Mathf.Clamp01(pettingExpressionElapsed / duration);
         float fadeIn = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.14f, normalizedTime));
-        float fadeOut = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.82f, 1f, normalizedTime));
-        float poseWeight = fadeIn * fadeOut;
+        float poseWeight = Mathf.Clamp01(visualBlendWeight) * fadeIn;
 
         if (headBone != null)
         {
@@ -1463,18 +1364,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     #endregion
 
     #region 예약된 식사와 수면
-
-    public void ProcessRoutineHotkeys()
-    {
-        if (Keyboard.current == null)
-            return;
-
-        if (Keyboard.current[eatKey].wasPressedThisFrame)
-            RequestMeal();
-
-        if (Keyboard.current[sleepKey].wasPressedThisFrame)
-            RequestSleep();
-    }
 
     public void RequestMeal()
     {
@@ -1685,8 +1574,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void CancelLowerPriorityActions()
     {
-        whistleResponseActive = false;
-        whistleIdleTimeRemaining = 0f;
         releaseAnimationActive = false;
         releaseSettleTimeRemaining = 0f;
         obstacleIdleTimeRemaining = 0f;
@@ -3482,7 +3369,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         float alignment = Vector3.Dot(transform.forward, GetPlanarDirectionToPlayerOrTarget());
         // 휘파람 추적 중에는 달리기 애니메이션만 재생되고 제자리에서 멈추지 않도록,
         // 몸이 목표 방향으로 전환된 뒤에는 정렬 감속을 적용하지 않습니다.
-        float movementScale = isEscapingObstacle || whistleResponseActive
+        float movementScale = isEscapingObstacle
             ? 1f
             : Mathf.Clamp01((alignment + 0.2f) / 1.2f);
         currentMoveSpeed = Mathf.MoveTowards(
@@ -3888,9 +3775,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         if (state == BrainState.Walk || state == BrainState.Trot || state == BrainState.Run)
             return false;
 
-        if (whistleResponseActive && whistleIdleTimeRemaining <= 0f)
-            return false;
-
         if (state != BrainState.FollowPlayer)
             return true;
 
@@ -3921,19 +3805,22 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         Vector3 planarOffset = transform.position - mapRecoveryCenter;
         planarOffset.y = 0f;
-        bool immediatelyInvalid = transform.position.y < minimumValidWorldY ||
-                                  planarOffset.sqrMagnitude >
-                                  maximumDistanceFromMapCenter * maximumDistanceFromMapCenter;
+        bool belowWorld = transform.position.y < minimumValidWorldY;
+        bool outsideRecoveryRadius = planarOffset.sqrMagnitude >
+                                     maximumDistanceFromMapCenter * maximumDistanceFromMapCenter;
         bool insideBlockingGeometry = !IsUsingBedPose() && IsInsideBlockingGeometry();
 
-        if (!immediatelyInvalid && !insideBlockingGeometry)
+        if (!belowWorld && !outsideRecoveryRadius && !insideBlockingGeometry)
         {
             invalidPositionElapsed = 0f;
             return false;
         }
 
         invalidPositionElapsed += Time.deltaTime;
-        if (!immediatelyInvalid && invalidPositionElapsed < wallPenetrationGrace)
+        // Falling through the floor still recovers immediately. Horizontal
+        // boundary/overlap checks receive a grace period so a fetch path near a
+        // corner cannot cause a one-frame center teleport.
+        if (!belowWorld && invalidPositionElapsed < Mathf.Max(0.75f, wallPenetrationGrace))
             return false;
 
         RecoverDogToMapCenter();
@@ -3987,8 +3874,6 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         mealRequested = false;
         sleepRequested = false;
         routineInterruptedByGrab = false;
-        whistleResponseActive = false;
-        whistleIdleTimeRemaining = 0f;
         obstacleAvoidanceDirection = Vector3.zero;
         obstacleAvoidanceTimeRemaining = 0f;
         obstacleIdleTimeRemaining = 0f;

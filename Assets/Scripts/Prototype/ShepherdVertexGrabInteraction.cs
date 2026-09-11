@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
 /// 셰퍼드를 목 뒤쪽 뼈로 잡아 들어 올리는 기능입니다.
@@ -14,8 +13,6 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     #region 인스펙터 설정
 
     [Header("잡기 입력")]
-    [Tooltip("G 키를 눌러 잡기와 내려놓기를 사용할지 여부입니다.")]
-    [SerializeField] private bool useKeyboardGrab = true;
     [Tooltip("잡기 판정에 사용할 플레이어 카메라입니다. 비워 두면 Main Camera를 자동으로 찾습니다.")]
     [SerializeField] private Camera playerCamera;
     [Tooltip("카메라에서 강아지까지 잡을 수 있는 최대 거리입니다.")]
@@ -40,6 +37,10 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [SerializeField, Range(1.5f, 4f)] private float maximumInteractionHoldDistance = 3.6f;
     [Tooltip("잡은 직후 실제 상호작용 거리보다 강아지를 추가로 뒤쪽에 배치하는 거리입니다. 값이 클수록 화면에서 조금 더 멀리 보입니다.")]
     [SerializeField, Range(0f, 1f)] private float heldDistanceExtra = 0.45f;
+    [Tooltip("XR로 강아지를 들 때 컨트롤러보다 플레이어 바깥쪽에 유지하는 추가 거리입니다.")]
+    [SerializeField, Range(0.1f, 1f)] private float xrHeldDistanceExtra = 0.42f;
+    [Tooltip("XR로 든 강아지의 목과 플레이어 머리 사이에 보장하는 최소 거리입니다.")]
+    [SerializeField, Range(0.7f, 2f)] private float xrMinimumHeadDistance = 1.05f;
     [Tooltip("강아지를 화면 중앙보다 위 또는 아래에 배치하는 높이입니다.")]
     [SerializeField] private float holdVerticalOffset = -0.2f;
     [Tooltip("플레이어가 위나 아래를 바라볼 때 잡은 위치가 화면 방향을 따라가는 정도입니다.")]
@@ -243,6 +244,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private static ShepherdVertexGrabInteraction heldShepherd;
 
     private bool holding;
+    private Transform xrHoldAnchor;
     private Vector3 rootVelocity;
     private Vector3 currentGrabTarget;
     private Vector3 grabTargetVelocity;
@@ -279,6 +281,26 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     public bool IsHolding => holding;
     public static bool IsAnyDogHeld => heldShepherd != null && heldShepherd.holding;
 
+    public bool TryBeginXRGrab(Transform controllerAnchor)
+    {
+        if (controllerAnchor == null || holding)
+            return false;
+
+        xrHoldAnchor = controllerAnchor;
+        GrabShepherd();
+        if (holding)
+            return true;
+
+        xrHoldAnchor = null;
+        return false;
+    }
+
+    public void ReleaseXRGrab()
+    {
+        if (holding)
+            ReleaseShepherd();
+    }
+
     #endregion
 
     #region Unity 생명주기
@@ -294,36 +316,10 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     {
         ResolveReferences();
 
-        // AI 컴포넌트는 들고 있는 동안 비활성화되므로 여기서 식사/수면 키를 대신 기록합니다.
-        if (holding && shepherdAI != null)
-            shepherdAI.ProcessRoutineHotkeys();
-
         if (!holding && Time.time >= nextColliderRefreshTime)
         {
             RefreshGrabCollisionMesh();
             nextColliderRefreshTime = Time.time + 0.12f;
-        }
-
-        if (useKeyboardGrab && Keyboard.current != null && Keyboard.current.gKey.wasPressedThisFrame)
-        {
-            // 공을 들고 있거나 같은 프레임에 공 상호작용이 처리된 경우에는
-            // 동일한 G 입력으로 강아지까지 동시에 잡거나 내려놓지 않습니다.
-            if (!holding &&
-                (IsAnyDogHeld ||
-                 FetchBallInteraction.IsAnyBallHeldByPlayer ||
-                 FetchBallInteraction.ConsumedGrabInputThisFrame))
-                return;
-
-            if (holding)
-            {
-                if (FetchBallInteraction.TryConsumeSharedGrabInput())
-                    ReleaseShepherd();
-            }
-            else if (TryFindGrabHit())
-            {
-                if (FetchBallInteraction.TryConsumeSharedGrabInput())
-                    GrabShepherd();
-            }
         }
     }
 
@@ -332,7 +328,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         if (releasePoseBlending)
             UpdateReleasePoseBlend();
 
-        if (!holding || playerCamera == null || neckGrabBone == null)
+        if (!holding || GetHoldReference() == null || neckGrabBone == null)
             return;
 
         if (loweringTransition)
@@ -476,8 +472,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
     private void GrabShepherd()
     {
+        Transform holdReference = GetHoldReference();
         if (holding || IsAnyDogHeld || FetchBallInteraction.IsAnyBallHeldByPlayer ||
-            neckGrabBone == null || skinnedRenderer == null)
+            neckGrabBone == null || skinnedRenderer == null || holdReference == null)
             return;
 
         holding = true;
@@ -493,14 +490,16 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         // 이 위치와 거리를 사용해야 강아지가 고정된 3m 지점으로 순간 이동하지 않습니다.
         Vector3 interactionGripPoint = GetNeckGripWorldPoint();
         float interactionDistance = Vector3.Distance(
-            playerCamera.transform.position,
+            holdReference.position,
             interactionGripPoint);
-        activeHoldDistance = useInteractionDistanceWhenGrabbed
-            ? Mathf.Clamp(
-                interactionDistance + heldDistanceExtra,
-                minimumInteractionHoldDistance,
-                Mathf.Max(maximumInteractionHoldDistance, 3.6f))
-            : holdDistance;
+        activeHoldDistance = xrHoldAnchor != null
+            ? 0f
+            : useInteractionDistanceWhenGrabbed
+                ? Mathf.Clamp(
+                    interactionDistance + heldDistanceExtra,
+                    minimumInteractionHoldDistance,
+                    Mathf.Max(maximumInteractionHoldDistance, 3.6f))
+                : holdDistance;
 
         // 애니메이션이 만든 순간 자세가 남아 있으면 머리 기준축도 함께 흔들릴 수 있으므로,
         // 들기 포즈와 동일한 기본 뼈 상태에서 얼굴의 앞·위 방향 기준을 저장합니다.
@@ -511,7 +510,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             neckGrabBone.position.y - skinnedRenderer.bounds.min.y);
 
         stableHeldPlanarForward = Vector3.ProjectOnPlane(
-            playerCamera.transform.forward,
+            holdReference.forward,
             Vector3.up);
         if (stableHeldPlanarForward.sqrMagnitude < 0.01f)
             stableHeldPlanarForward = -transform.forward;
@@ -524,7 +523,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         initialCameraTarget = ConstrainGrabTargetHeight(initialCameraTarget);
         currentGrabTarget = initialCameraTarget;
         grabTargetInitialized = true;
-        previousPlayerCameraPosition = playerCamera.transform.position;
+        previousPlayerCameraPosition = holdReference.position;
         playerCameraPositionInitialized = true;
         loweringTransition = false;
         lowerTransitionProgress = 0f;
@@ -639,6 +638,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         activeHoldDistance = 0f;
         grabTargetInitialized = false;
         playerCameraPositionInitialized = false;
+        xrHoldAnchor = null;
 
         if (skinnedRenderer != null)
             skinnedRenderer.enabled = skinnedRendererWasEnabled;
@@ -1022,7 +1022,27 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
     private Vector3 CalculateDesiredGrabTarget()
     {
-        Vector3 cameraForward = playerCamera.transform.forward;
+        Transform holdReference = GetHoldReference();
+        if (holdReference == null)
+            return currentGrabTarget;
+
+        if (xrHoldAnchor != null)
+        {
+            if (playerCamera == null)
+                return xrHoldAnchor.position + xrHoldAnchor.forward * xrHeldDistanceExtra;
+
+            Vector3 fromHead = xrHoldAnchor.position - playerCamera.transform.position;
+            float controllerDistance = fromHead.magnitude;
+            Vector3 outwardDirection = controllerDistance > 0.05f
+                ? fromHead / controllerDistance
+                : playerCamera.transform.forward;
+            float targetDistance = Mathf.Max(
+                xrMinimumHeadDistance,
+                controllerDistance + xrHeldDistanceExtra);
+            return playerCamera.transform.position + outwardDirection * targetDistance;
+        }
+
+        Vector3 cameraForward = holdReference.forward;
         Vector3 planarForward = Vector3.ProjectOnPlane(cameraForward, Vector3.up);
 
         // 카메라가 수직에 가까워질 때 아주 작은 수평 벡터의 부호가 바뀌면 몸 전체가
@@ -1053,20 +1073,21 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
         // 높이 오프셋은 카메라의 기울어진 Up 대신 월드의 위쪽을 사용합니다.
         // 그래서 마우스를 내릴 때 오프셋까지 회전하며 강아지를 뒤로 잡아당기지 않습니다.
-        return playerCamera.transform.position +
+        return holdReference.position +
                limitedForward.normalized * effectiveHoldDistance +
                Vector3.up * holdVerticalOffset;
     }
 
     private void ApplyPlayerTranslationToGrabTarget()
     {
-        if (playerCamera == null)
+        Transform holdReference = GetHoldReference();
+        if (holdReference == null)
         {
             playerCameraPositionInitialized = false;
             return;
         }
 
-        Vector3 cameraPosition = playerCamera.transform.position;
+        Vector3 cameraPosition = holdReference.position;
         if (playerCameraPositionInitialized && grabTargetInitialized)
         {
             Vector3 cameraDelta = cameraPosition - previousPlayerCameraPosition;
@@ -1090,7 +1111,10 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         // 매달리므로, 그 길이와 바닥 여유 높이를 합친 만큼 목을 바닥 위에 유지합니다.
         // 천장이 있는 실내에서 천장을 바닥으로 오인하지 않도록 플레이어 눈높이 바로 위에서
         // 아래로만 검사합니다. 목표가 이미 바닥 아래에 있어도 이 시작점은 항상 바닥 위에 있습니다.
-        float rayStartY = playerCamera.transform.position.y + 0.25f;
+        Transform holdReference = GetHoldReference();
+        float rayStartY = holdReference != null
+            ? holdReference.position.y + 0.25f
+            : target.y + 0.25f;
         Vector3 rayOrigin = new Vector3(target.x, rayStartY, target.z);
         if (Physics.Raycast(
                 rayOrigin,
@@ -1110,6 +1134,14 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         }
 
         return target;
+    }
+
+    private Transform GetHoldReference()
+    {
+        if (xrHoldAnchor != null)
+            return xrHoldAnchor;
+
+        return playerCamera != null ? playerCamera.transform : null;
     }
 
     #endregion

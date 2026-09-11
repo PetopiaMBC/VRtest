@@ -1,9 +1,7 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 /// <summary>
-/// PC용 공 줍기/던지기와 강아지 공놀이 사이를 연결합니다.
-/// G로 바라보는 공을 들고, 다시 G를 누르면 카메라 정면으로 던집니다.
+/// 컨트롤러 공 잡기/던지기와 강아지 공놀이 사이를 연결합니다.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(Rigidbody))]
@@ -11,13 +9,14 @@ using UnityEngine.InputSystem;
 public sealed class FetchBallInteraction : MonoBehaviour
 {
     [Header("Player Interaction")]
-    [SerializeField] private Key interactionKey = Key.G;
     [SerializeField, Min(0.5f)] private float interactionDistance = 4f;
     [Tooltip("작아진 공을 화면 정중앙에 정확히 맞추지 않아도 잡을 수 있는 화면 중앙 보조 반경입니다.")]
     [SerializeField, Range(0.02f, 0.3f)] private float grabAimAssistViewportRadius = 0.14f;
     [SerializeField, Min(0.2f)] private float holdDistance = 0.72f;
     [SerializeField] private float holdVerticalOffset = -0.18f;
     [SerializeField, Min(0.1f)] private float heldFollowSpeed = 24f;
+    [Tooltip("XR 컨트롤러로 잡은 공이 손과 플레이어 충돌체에 겹치지 않도록 바깥쪽으로 띄우는 거리입니다.")]
+    [SerializeField, Range(0.05f, 0.4f)] private float xrHoldSeparation = 0.18f;
 
     [Header("Throw")]
     [SerializeField, Min(0.1f)] private float throwSpeed = 7.5f;
@@ -48,6 +47,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
     private Collider[] ballColliders;
     private Transform originalParent;
     private bool heldByPlayer;
+    private Transform xrHoldAnchor;
     private bool carriedByDog;
     private bool dogMouthCaptureInProgress;
     private Vector3 dogCaptureStartPosition;
@@ -66,6 +66,59 @@ public sealed class FetchBallInteraction : MonoBehaviour
     public Vector3 WorldPosition => transform.position;
     public Vector3 CurrentVelocity => ballBody != null ? ballBody.linearVelocity : Vector3.zero;
     public float CollisionRadius => GetCollisionRadius();
+
+    public void ApplyPetSpaceContract(PetSpaceContractSnapshot snapshot)
+    {
+        if (snapshot.State != PetSpaceContractState.Valid)
+            return;
+
+        if (snapshot.HasWalkArea)
+        {
+            mapCenter = snapshot.WalkArea.center;
+            playableAreaHalfExtents = new Vector2(
+                Mathf.Max(0.5f, snapshot.WalkArea.extents.x),
+                Mathf.Max(0.5f, snapshot.WalkArea.extents.z));
+        }
+        else if (snapshot.HasRecoveryPosition)
+        {
+            mapCenter = snapshot.RecoveryPosition.position;
+        }
+    }
+
+    public bool TryBeginXRGrab(Transform controllerAnchor)
+    {
+        if (controllerAnchor == null || heldByPlayer || carriedByDog ||
+            dogMouthCaptureInProgress || playerHeldBall != null ||
+            ShepherdVertexGrabInteraction.IsAnyDogHeld)
+            return false;
+
+        xrHoldAnchor = controllerAnchor;
+        PickUpByPlayer();
+        if (heldByPlayer)
+            return true;
+
+        xrHoldAnchor = null;
+        return false;
+    }
+
+    public void ReleaseXRGrab(Vector3 controllerVelocity, Vector3 controllerAngularVelocity)
+    {
+        if (!heldByPlayer || xrHoldAnchor == null)
+            return;
+
+        heldByPlayer = false;
+        if (playerHeldBall == this)
+            playerHeldBall = null;
+
+        xrHoldAnchor = null;
+        ConfigureFreePhysics();
+        ballBody.linearVelocity = controllerVelocity;
+        ballBody.angularVelocity = controllerAngularVelocity;
+        lastThrowTime = Time.time;
+
+        if (companionAI != null)
+            companionAI.BeginChasingThrownBall(this);
+    }
 
     public static bool TryConsumeSharedGrabInput()
     {
@@ -121,31 +174,6 @@ public sealed class FetchBallInteraction : MonoBehaviour
         if (heldByPlayer)
             UpdatePlayerHeldPose();
 
-        if (Keyboard.current == null ||
-            !Keyboard.current[interactionKey].wasPressedThisFrame)
-            return;
-
-        // 강아지를 들고 있는 동안의 G 입력은 강아지 내려놓기 전용입니다.
-        if (ShepherdVertexGrabInteraction.IsAnyDogHeld)
-            return;
-
-        if (heldByPlayer)
-        {
-            if (!TryConsumeSharedGrabInput())
-                return;
-
-            ThrowFromPlayer();
-            return;
-        }
-
-        if (playerHeldBall == null && !carriedByDog &&
-            !dogMouthCaptureInProgress && IsPlayerLookingAtBall())
-        {
-            if (!TryConsumeSharedGrabInput())
-                return;
-
-            PickUpByPlayer();
-        }
     }
 
     private void LateUpdate()
@@ -173,6 +201,8 @@ public sealed class FetchBallInteraction : MonoBehaviour
     {
         if (playerHeldBall == this)
             playerHeldBall = null;
+
+        xrHoldAnchor = null;
     }
 
     private void OnDestroy()
@@ -245,7 +275,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
     private void PickUpByPlayer()
     {
-        if (playerCamera == null || playerHeldBall != null ||
+        if (GetHoldReference() == null || playerHeldBall != null ||
             ShepherdVertexGrabInteraction.IsAnyDogHeld)
             return;
 
@@ -254,7 +284,10 @@ public sealed class FetchBallInteraction : MonoBehaviour
         RestoreOriginalParent();
         playerHeldBall = this;
         heldVelocity = Vector3.zero;
-        SetCollidersEnabled(true);
+        // A held ball is driven kinematically. Keeping its colliders enabled while
+        // it overlaps the hand/player rig can depenetrate the CharacterController
+        // and push the player backwards, so restore them only on release.
+        SetCollidersEnabled(false);
         ballBody.linearVelocity = Vector3.zero;
         ballBody.angularVelocity = Vector3.zero;
         ballBody.useGravity = false;
@@ -269,12 +302,27 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
     private void UpdatePlayerHeldPose(bool snap = false)
     {
-        if (playerCamera == null)
+        Transform holdReference = GetHoldReference();
+        if (holdReference == null)
             return;
 
-        Vector3 targetPosition = playerCamera.transform.position +
-                                 playerCamera.transform.forward * holdDistance +
-                                 playerCamera.transform.up * holdVerticalOffset;
+        Vector3 targetPosition;
+        if (xrHoldAnchor != null)
+        {
+            Vector3 outward = playerCamera != null
+                ? xrHoldAnchor.position - playerCamera.transform.position
+                : xrHoldAnchor.forward;
+            if (outward.sqrMagnitude < 0.0001f)
+                outward = xrHoldAnchor.forward;
+            targetPosition = xrHoldAnchor.position +
+                             outward.normalized * xrHoldSeparation;
+        }
+        else
+        {
+            targetPosition = holdReference.position +
+                             holdReference.forward * holdDistance +
+                             holdReference.up * holdVerticalOffset;
+        }
         Vector3 desiredPosition = snap
             ? targetPosition
             : Vector3.SmoothDamp(
@@ -285,8 +333,16 @@ public sealed class FetchBallInteraction : MonoBehaviour
         transform.position = GetCollisionSafePosition(transform.position, desiredPosition);
         transform.rotation = Quaternion.RotateTowards(
             transform.rotation,
-            playerCamera.transform.rotation,
+            holdReference.rotation,
             720f * Time.deltaTime);
+    }
+
+    private Transform GetHoldReference()
+    {
+        if (xrHoldAnchor != null)
+            return xrHoldAnchor;
+
+        return playerCamera != null ? playerCamera.transform : null;
     }
 
     private void ThrowFromPlayer()
