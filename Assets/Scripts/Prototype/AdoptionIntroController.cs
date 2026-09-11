@@ -28,6 +28,8 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
     [Header("Scene Flow")]
     [SerializeField] private string playSceneName = "PlayScene";
+    [SerializeField] private string quest2SceneName = "Q2VirtualRoomScene";
+    [SerializeField] private string quest3SceneName = "Q3MRScene";
     [SerializeField] private string previewDogName = "Adoption Shiba Preview";
     [SerializeField, Tooltip("Unity Editor에서 AdoptionScene을 직접 실행할 때 저장 여부와 관계없이 입양 UI를 보여줍니다. 빌드에는 영향을 주지 않습니다.")]
     private bool showAdoptionWhenTestingInEditor = true;
@@ -94,6 +96,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
     private Text confirmLabel;
     private Button confirmButton;
     private Animator previewAnimator;
+    private Transform previewDogTransform;
     private Font interfaceFont;
     private Sprite roundedSprite;
     private Texture2D roundedTexture;
@@ -110,6 +113,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
     private Material backgroundMaterial;
     private Camera backgroundCamera;
     private float lastBackgroundAspect = -1f;
+    private bool xrStageAligned;
 
     public static bool HasCompletedAdoption =>
         PlayerPrefs.GetInt(AdoptionCompletedKey, 0) == 1;
@@ -121,7 +125,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
     {
         if (ShouldSkipAdoption())
         {
-            SceneManager.LoadScene(playSceneName);
+            SceneManager.LoadScene(ResolveGameplaySceneName());
             return;
         }
 
@@ -138,8 +142,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (backgroundMaterial != null)
-            Destroy(backgroundMaterial);
+        ReleaseBackground();
     }
 
     private IEnumerator Start()
@@ -148,8 +151,15 @@ public sealed class AdoptionIntroController : MonoBehaviour
             yield break;
 
         yield return null;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        // Opening Meta's overlay keyboard during the first scene frame is unreliable.
+        // Leave the field unselected so an XR controller click performs a fresh request.
+        if (EventSystem.current != null)
+            EventSystem.current.SetSelectedGameObject(null);
+#else
         nameInput.ActivateInputField();
         nameInput.Select();
+#endif
 
         if (previewAnimator != null)
             previewIdleRoutine = StartCoroutine(PlayPreviewIdleVariety());
@@ -161,6 +171,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
             return;
 
         UpdateBackgroundLayout();
+        TryAlignQuestStage();
         BindImeKeyboard();
         RefreshNameValidation();
 
@@ -340,7 +351,11 @@ public sealed class AdoptionIntroController : MonoBehaviour
             yield return FadeTo(1f, fadeOutDuration);
         }
 
-        AsyncOperation loadOperation = SceneManager.LoadSceneAsync(playSceneName);
+        // The XR camera persists between scenes, so its child background would also
+        // persist. Remove both the quad and its runtime material while the fade is black.
+        ReleaseBackground();
+
+        AsyncOperation loadOperation = SceneManager.LoadSceneAsync(ResolveGameplaySceneName());
         if (loadOperation != null)
         {
             while (!loadOperation.isDone)
@@ -513,6 +528,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
         if (previewDog == null)
             return;
 
+        previewDogTransform = previewDog.transform;
         previewAnimator = previewDog.GetComponent<Animator>();
         Collider[] colliders = previewDog.GetComponentsInChildren<Collider>(true);
         for (int i = 0; i < colliders.Length; i++)
@@ -531,6 +547,32 @@ public sealed class AdoptionIntroController : MonoBehaviour
             previewAnimator.CrossFadeInFixedTime(previewIdleState, 0.05f);
         }
 
+    }
+
+    private void TryAlignQuestStage()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (xrStageAligned || previewDogTransform == null)
+            return;
+
+        Camera xrCamera = Camera.main;
+        if (xrCamera == null || !xrCamera.stereoEnabled)
+            return;
+
+        Vector3 forward = Vector3.ProjectOnPlane(xrCamera.transform.forward, Vector3.up);
+        if (forward.sqrMagnitude < 0.001f)
+            return;
+
+        forward.Normalize();
+        Vector3 right = Vector3.Cross(Vector3.up, forward).normalized;
+        Vector3 targetPosition = xrCamera.transform.position + forward * 2.2f - right * 0.72f;
+        targetPosition.y = xrCamera.transform.position.y - 1.35f;
+
+        previewDogTransform.position = targetPosition;
+        previewDogTransform.rotation = Quaternion.LookRotation(-forward, Vector3.up);
+        xrStageAligned = true;
+        UpdateBackgroundLayout(true);
+#endif
     }
 
     private void PrepareBackground()
@@ -571,6 +613,8 @@ public sealed class AdoptionIntroController : MonoBehaviour
             backgroundMaterial.SetTexture("_BaseMap", adoptionBackgroundTexture);
         if (backgroundMaterial.HasProperty("_BaseColor"))
             backgroundMaterial.SetColor("_BaseColor", Color.white);
+        if (backgroundMaterial.HasProperty("_Cull"))
+            backgroundMaterial.SetFloat("_Cull", 0f);
 
         MeshRenderer renderer = backgroundObject.GetComponent<MeshRenderer>();
         renderer.sharedMaterial = backgroundMaterial;
@@ -598,6 +642,10 @@ public sealed class AdoptionIntroController : MonoBehaviour
             backgroundDistance,
             backgroundCamera.nearClipPlane + 0.5f,
             backgroundCamera.farClipPlane - 1f);
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (backgroundCamera.stereoEnabled)
+            distance = Mathf.Min(distance, 5f);
+#endif
         float height = 2f * distance * Mathf.Tan(
             backgroundCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
         float width = height * viewportAspect;
@@ -626,6 +674,24 @@ public sealed class AdoptionIntroController : MonoBehaviour
         }
     }
 
+    private void ReleaseBackground()
+    {
+        if (backgroundObject != null)
+        {
+            backgroundObject.SetActive(false);
+            Destroy(backgroundObject);
+            backgroundObject = null;
+        }
+
+        if (backgroundMaterial != null)
+        {
+            Destroy(backgroundMaterial);
+            backgroundMaterial = null;
+        }
+
+        backgroundCamera = null;
+    }
+
     private void CreateInterface()
     {
         interfaceFont = regularInterfaceFont != null
@@ -643,6 +709,7 @@ public sealed class AdoptionIntroController : MonoBehaviour
         Canvas canvas = canvasObject.GetComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = 20;
+        canvasObject.AddComponent<QuestWorldSpaceCanvasAdapter>();
 
         CanvasScaler scaler = canvasObject.GetComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -757,6 +824,8 @@ public sealed class AdoptionIntroController : MonoBehaviour
         Stretch(inputImage.rectTransform, 5f);
         inputImage.raycastTarget = true;
         InputField input = inputImage.gameObject.AddComponent<InputField>();
+        inputImage.gameObject.AddComponent<QuestSystemKeyboardBridge>();
+        inputImage.gameObject.AddComponent<QuestNameInputPad>();
         input.targetGraphic = inputImage;
 
         Text inputText = CreateStretchText(
@@ -1031,6 +1100,25 @@ public sealed class AdoptionIntroController : MonoBehaviour
         GameObject eventSystemObject = new GameObject("EventSystem", typeof(EventSystem));
         InputSystemUIInputModule inputModule = eventSystemObject.AddComponent<InputSystemUIInputModule>();
         inputModule.AssignDefaultActions();
+    }
+
+    private string ResolveGameplaySceneName()
+    {
+        bool isQuest3 = SystemInfo.deviceModel.IndexOf(
+                            "Quest 3",
+                            System.StringComparison.OrdinalIgnoreCase) >= 0;
+        bool canLoadQuest3 = Application.CanStreamedLevelBeLoaded(quest3SceneName);
+        bool canLoadQuest2 = Application.CanStreamedLevelBeLoaded(quest2SceneName);
+
+        // A Quest build profile contains only its own platform wrapper. This also
+        // lets the desktop MR Simulator profile select Q3 without spoofing a device model.
+        if (canLoadQuest3 && (isQuest3 || !canLoadQuest2))
+            return quest3SceneName;
+        if (canLoadQuest2)
+            return quest2SceneName;
+        if (canLoadQuest3)
+            return quest3SceneName;
+        return playSceneName;
     }
 
     private static Font CreateKoreanCapableFont()

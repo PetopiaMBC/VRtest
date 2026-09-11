@@ -9,6 +9,12 @@ EditorBuildSettings:
     path: Assets/Scenes/AdoptionScene.unity
     guid: fc4415b8993ce7648afae240bd1b1ecb
   - enabled: 1
+    path: Assets/Scenes/Q2VirtualRoomScene.unity
+    guid: 09729d42f070062439eb59a8bb78e259
+  - enabled: 1
+    path: Assets/Scenes/Q3MRScene.unity
+    guid: 028378f0ae096bb4db9427837ea4bfa9
+  - enabled: 1
     path: Assets/Scenes/PlayScene/PlayScene.unity
     guid: 45fb73f2efdc3dc40b747dcd64a9b841
   m_configObjects:
