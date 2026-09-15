@@ -13,6 +13,10 @@ public struct PlayerInputState
     public bool GripHeld;
     public bool GripPressed;
     public bool GripReleased;
+    public bool PrimaryButtonHeld;
+    public bool PrimaryButtonPressed;
+    public bool SecondaryButtonHeld;
+    public bool SecondaryButtonPressed;
     public bool IsTrackingValid;
     public PlayerDeviceMode DeviceMode;
     public double Timestamp;

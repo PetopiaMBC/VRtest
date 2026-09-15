@@ -20,6 +20,14 @@ public sealed class XRControllerContactInteractor : MonoBehaviour
     [SerializeField, Range(1, 4)] private int requiredAlternatingStrokes = 1;
     [SerializeField, Range(3f, 8f)] private float minimumPettingRetriggerInterval = 5f;
 
+    [Header("Call")]
+    [Tooltip("Quest B/Y (secondary button) calls the dog. This avoids the A/X UI click binding.")]
+    [SerializeField, Min(0.1f)] private float minimumCallRetriggerInterval = 1.5f;
+
+    [Header("Temporary Affinity Test")]
+    [Tooltip("Hold both grips, then press X/Y/A/B to set affinity to 0/30/70/100.")]
+    [SerializeField] private bool enableAffinityTestShortcuts = true;
+
     private sealed class HandRuntime
     {
         public PlayerHand Hand;
@@ -47,6 +55,7 @@ public sealed class XRControllerContactInteractor : MonoBehaviour
     private FetchBallInteraction heldBall;
     private PlayerHand holdingHand;
     private float nextPettingAllowedTime;
+    private float nextCallAllowedTime;
 
     private void Awake()
     {
@@ -70,10 +79,59 @@ public sealed class XRControllerContactInteractor : MonoBehaviour
             right.ContactDog != pettingContactLatch)
             pettingContactLatch = null;
 
+        bool affinityTestModifierHeld = enableAffinityTestShortcuts &&
+                                        heldDog == null && heldBall == null &&
+                                        input.LeftState.GripHeld &&
+                                        input.RightState.GripHeld;
+        if (affinityTestModifierHeld)
+        {
+            ProcessAffinityTestInput(input.LeftState, input.RightState);
+            ResetGesture(left);
+            ResetGesture(right);
+            return;
+        }
+
         UpdatePetting(left, input.LeftState);
         UpdatePetting(right, input.RightState);
+        ProcessCallInput(input.LeftState, input.RightState);
         ProcessGripInteraction(left, input.LeftState);
         ProcessGripInteraction(right, input.RightState);
+    }
+
+    private static void ProcessAffinityTestInput(
+        PlayerInputState leftState,
+        PlayerInputState rightState)
+    {
+        float targetAffinity;
+        if (leftState.PrimaryButtonPressed)
+            targetAffinity = 0f;
+        else if (leftState.SecondaryButtonPressed)
+            targetAffinity = 30f;
+        else if (rightState.PrimaryButtonPressed)
+            targetAffinity = 70f;
+        else if (rightState.SecondaryButtonPressed)
+            targetAffinity = 100f;
+        else
+            return;
+
+        ShepherdCompanionAI dog = FindFirstObjectByType<ShepherdCompanionAI>();
+        if (dog == null)
+            return;
+
+        dog.SetAffinityForTesting(targetAffinity);
+        dog.RequestCall();
+    }
+
+    private void ProcessCallInput(PlayerInputState leftState, PlayerInputState rightState)
+    {
+        if ((!leftState.SecondaryButtonPressed && !rightState.SecondaryButtonPressed) ||
+            Time.unscaledTime < nextCallAllowedTime ||
+            heldDog != null || heldBall != null)
+            return;
+
+        ShepherdCompanionAI dog = FindFirstObjectByType<ShepherdCompanionAI>();
+        if (dog != null && dog.RequestCall())
+            nextCallAllowedTime = Time.unscaledTime + minimumCallRetriggerInterval;
     }
 
     private Transform CreateAnchor(string anchorName)

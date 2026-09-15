@@ -5,6 +5,7 @@ using UnityEngine;
 /// 키보드 입력은 VR 손 상호작용을 연결하기 전의 테스트 경로로만 사용합니다.
 /// </summary>
 [RequireComponent(typeof(PetNeedsSystem))]
+[RequireComponent(typeof(PetAffinitySystem))]
 public sealed class ShepherdCompanionAI : MonoBehaviour
 {
     #region 상태 정의
@@ -64,6 +65,14 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         SettlingCurrentIdle,
         StandingUpAfterPetting,
         ReleasingToRandomBehavior
+    }
+
+    private enum CallResponsePhase
+    {
+        None,
+        Observing,
+        Acknowledging,
+        Approaching
     }
 
     #endregion
@@ -213,6 +222,21 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     [SerializeField, Range(-80f, -20f)] private float pettingEyelidCloseOffset = -56.2f;
     [SerializeField, Range(1, 10)] private int minimumPettingHearts = 3;
     [SerializeField, Range(1, 10)] private int maximumPettingHearts = 6;
+
+    [Header("친밀도와 부르기")]
+    [Tooltip("처음 만난 강아지가 플레이어와 유지하려는 거리입니다.")]
+    [SerializeField, Min(0.5f)] private float newPlayerStopDistance = 2.25f;
+    [Tooltip("익숙해진 강아지가 플레이어와 유지하려는 거리입니다.")]
+    [SerializeField, Min(0.5f)] private float familiarPlayerStopDistance = 1.55f;
+    [Tooltip("유대가 생긴 강아지가 플레이어와 유지하려는 거리입니다.")]
+    [SerializeField, Min(0.5f)] private float bondedPlayerStopDistance = 1.05f;
+    [SerializeField, Min(0f)] private float newCallObserveDelay = 1.4f;
+    [SerializeField, Min(0f)] private float familiarCallObserveDelay = 0.55f;
+    [SerializeField, Min(0f)] private float bondedCallObserveDelay = 0.1f;
+    [SerializeField, Min(0.1f)] private float callAcknowledgeMaximumDuration = 1.4f;
+    [SerializeField] private string callAcknowledgeState = "Arm_Shiba|Bark";
+    [Tooltip("D의 저장 시스템이 연결되기 전까지 PlayerPrefs 브리지를 자동으로 사용합니다.")]
+    [SerializeField] private bool useLocalAffinityPersistence = true;
 
     [Header("공놀이")]
     [Tooltip("플레이어가 공을 든 동안 이 거리까지 다가온 뒤 공을 바라봅니다.")]
@@ -411,6 +435,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private bool pendingFetchIsThrown;
     private ShepherdVertexGrabInteraction grabInteraction;
     private PetNeedsSystem needsSystem;
+    private PetAffinitySystem affinitySystem;
     private PettingPhase pettingPhase;
     private float pettingElapsed;
     private float pettingExpressionElapsed;
@@ -426,10 +451,28 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     private float invalidPositionElapsed;
     private float fetchNoProgressElapsed;
     private float bestFetchDistance = float.PositiveInfinity;
+    private CallResponsePhase callResponsePhase;
+    private float callResponseElapsed;
 
     public float Hunger => needsSystem != null ? needsSystem.Hunger : PetNeedsSystem.MaximumValue;
     public float Fatigue => needsSystem != null ? needsSystem.Fatigue : PetNeedsSystem.MaximumValue;
+    public float Affinity => affinitySystem != null ? affinitySystem.Affinity : 0f;
+    public PetAffinityStage AffinityStage => affinitySystem != null
+        ? affinitySystem.Stage
+        : PetAffinityStage.New;
     public bool IsBeingPetted => pettingPhase != PettingPhase.None;
+
+    public void SetAffinityForTesting(float value)
+    {
+        if (affinitySystem == null)
+            affinitySystem = GetComponent<PetAffinitySystem>();
+        if (affinitySystem == null)
+            affinitySystem = gameObject.AddComponent<PetAffinitySystem>();
+
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
+        affinitySystem.SetAffinityForTesting(value);
+    }
 
     public void ApplyPetSpaceContract(PetSpaceContractSnapshot snapshot, bool applySpawnPose)
     {
@@ -658,6 +701,16 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         needsSystem = GetComponent<PetNeedsSystem>();
         if (needsSystem == null)
             needsSystem = gameObject.AddComponent<PetNeedsSystem>();
+        affinitySystem = GetComponent<PetAffinitySystem>();
+        if (affinitySystem == null)
+            affinitySystem = gameObject.AddComponent<PetAffinitySystem>();
+        if (useLocalAffinityPersistence)
+        {
+            PetAffinityPlayerPrefsBridge persistenceBridge =
+                GetComponent<PetAffinityPlayerPrefsBridge>();
+            if (persistenceBridge == null)
+                gameObject.AddComponent<PetAffinityPlayerPrefsBridge>();
+        }
 
         if (animator != null)
             animator.applyRootMotion = false;
@@ -694,6 +747,13 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         TryStartPendingFetch();
 
         if (UpdateBallPlay())
+        {
+            hadPlayerInRange = playerInRange;
+            KeepOnGround();
+            return;
+        }
+
+        if (UpdateCallResponse())
         {
             hadPlayerInRange = playerInRange;
             KeepOnGround();
@@ -994,6 +1054,114 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     #endregion
 
+    #region 부르기 반응
+
+    /// <summary>
+    /// Semantic call request consumed from A's controller input adapter.
+    /// Returns false while a higher-priority interaction owns the dog.
+    /// </summary>
+    public bool RequestCall()
+    {
+        ResolveReferences();
+        if (callResponsePhase != CallResponsePhase.None ||
+            (grabInteraction != null && grabInteraction.IsHolding) ||
+            pettingPhase != PettingPhase.None ||
+            fetchPhase != FetchPhase.None || pendingFetchBall != null ||
+            scheduledRoutinePhase != ScheduledRoutinePhase.None ||
+            mealRequested || sleepRequested ||
+            releaseAnimationActive ||
+            (needsSystem != null &&
+             (needsSystem.RequiresImmediateMeal || needsSystem.RequiresSleep)))
+            return false;
+
+        CancelLowerPriorityActions();
+        callResponsePhase = CallResponsePhase.Observing;
+        callResponseElapsed = 0f;
+        state = BrainState.Idle;
+        currentIdleState = idleBreathingState;
+        PlayAnimation(idleBreathingState);
+        return true;
+    }
+
+    private bool UpdateCallResponse()
+    {
+        if (callResponsePhase == CallResponsePhase.None)
+            return false;
+
+        callResponseElapsed += Time.deltaTime;
+        if (callResponsePhase == CallResponsePhase.Observing)
+        {
+            currentMoveSpeed = 0f;
+            movementUsesRunAnimation = false;
+            turnAnimationActive = false;
+            FacePlayerWhileIdle();
+            if (callResponseElapsed < GetCallObserveDelay())
+                return true;
+
+            callResponsePhase = CallResponsePhase.Acknowledging;
+            callResponseElapsed = 0f;
+            PlayAnimationFromBeginning(callAcknowledgeState, animationBlendTime);
+            return true;
+        }
+
+        if (callResponsePhase == CallResponsePhase.Acknowledging)
+        {
+            currentMoveSpeed = 0f;
+            movementUsesRunAnimation = false;
+            turnAnimationActive = false;
+            FacePlayerWhileIdle();
+            if (!IsAnimationCycleFinished(callAcknowledgeState) &&
+                callResponseElapsed < callAcknowledgeMaximumDuration)
+                return true;
+
+            callResponsePhase = CallResponsePhase.Approaching;
+            callResponseElapsed = 0f;
+            currentAnimation = null;
+        }
+
+        Vector3 toPlayer = GetPlayerPosition() - transform.position;
+        toPlayer.y = 0f;
+        if (toPlayer.magnitude <= GetEffectivePlayerStopDistance())
+        {
+            CompleteCallResponse();
+            return true;
+        }
+
+        UpdatePlayerFollow();
+        return true;
+    }
+
+    private void CompleteCallResponse()
+    {
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
+        currentMoveSpeed = 0f;
+        movementUsesRunAnimation = false;
+        followAnimationModeInitialized = false;
+        affinitySystem?.RegisterExperience(PetAffinityExperience.CallResponse);
+
+        state = BrainState.Idle;
+        stateTimeRemaining = Random.Range(idleDurationMin, idleDurationMax);
+        PlayAnimation(AffinityStage == PetAffinityStage.Bonded
+            ? idlePlayingState
+            : idleBreathingState);
+    }
+
+    private float GetCallObserveDelay()
+    {
+        switch (AffinityStage)
+        {
+            case PetAffinityStage.Bonded:
+                return bondedCallObserveDelay;
+            case PetAffinityStage.Familiar:
+                return familiarCallObserveDelay;
+            default:
+                return newCallObserveDelay;
+        }
+    }
+
+    #endregion
+
     #region 쓰다듬기
 
     /// <summary>
@@ -1021,6 +1189,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         followUsesRunAnimation = false;
         followUsesTrotAnimation = false;
         followAnimationModeInitialized = false;
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
         pettingElapsed = 0f;
         // 현재 Idle 자세는 그대로 이어 가고, 걷기/달리기 중이었다면 차분한
         // 호흡 자세로 크로스페이드한 뒤 표정 반응을 겹칩니다.
@@ -1031,6 +1201,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                                           IsConfiguredIdleState(currentIdleState) &&
                                           IsAnimatorInRequestedState(currentIdleState);
         BeginPettingReaction(canPreserveCurrentIdlePose);
+        affinitySystem?.RegisterExperience(PetAffinityExperience.Petting);
 
         return true;
     }
@@ -1039,6 +1210,9 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         ResolveReferences();
         needsSystem?.RegisterGrabbed();
+        affinitySystem?.RegisterExperience(PetAffinityExperience.Grab);
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
         pettingPhase = PettingPhase.None;
         pettingElapsed = 0f;
         ResetPettingBlendState();
@@ -1109,7 +1283,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         turnAnimationActive = false;
         pettingElapsed += Time.deltaTime;
         pettingExpressionElapsed += Time.deltaTime;
-        if (pettingElapsed < Mathf.Max(0.1f, pettingDuration))
+        if (pettingElapsed < GetEffectivePettingDuration())
             return true;
 
         CompletePettingReaction();
@@ -1325,7 +1499,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void ApplyPettingFacePose(float visualBlendWeight)
     {
-        float duration = Mathf.Max(0.1f, pettingDuration);
+        float duration = GetEffectivePettingDuration();
         float normalizedTime = Mathf.Clamp01(pettingExpressionElapsed / duration);
         float fadeIn = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.14f, normalizedTime));
         float poseWeight = Mathf.Clamp01(visualBlendWeight) * fadeIn;
@@ -1574,6 +1748,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void CancelLowerPriorityActions()
     {
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
         releaseAnimationActive = false;
         releaseSettleTimeRemaining = 0f;
         obstacleIdleTimeRemaining = 0f;
@@ -2208,6 +2384,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
     private void BeginBallPlay(FetchBallInteraction ball, FetchPhase phase)
     {
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
         ResolveReferences();
 
         // 일반 생활 Idle에서 앉거나 엎드려 있던 경우에는 공놀이 우선순위가
@@ -2451,6 +2629,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                             // 공놀이 비용은 던진 순간이 아니라 공이 실제 입에 고정된
                             // 단 한 번의 포획 완료 시점에만 적용합니다.
                             needsSystem?.RegisterBallCaught();
+                            affinitySystem?.RegisterExperience(PetAffinityExperience.Fetch);
                         }
                         else
                         {
@@ -2935,7 +3114,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         Vector3 playerPosition = GetPlayerPosition();
         Vector3 horizontalOffset = playerPosition - transform.position;
         horizontalOffset.y = 0f;
-        return horizontalOffset.sqrMagnitude <= playerDetectionDistance * playerDetectionDistance;
+        float detectionDistance = GetEffectivePlayerDetectionDistance();
+        return horizontalOffset.sqrMagnitude <= detectionDistance * detectionDistance;
     }
 
     private Vector3 GetPlayerPosition()
@@ -2944,6 +3124,48 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return playerCamera.transform.position;
 
         return playerTransform != null ? playerTransform.position : transform.position;
+    }
+
+    private float GetEffectivePlayerDetectionDistance()
+    {
+        switch (AffinityStage)
+        {
+            case PetAffinityStage.Bonded:
+                return playerDetectionDistance + 1.5f;
+            case PetAffinityStage.Familiar:
+                return playerDetectionDistance + 0.75f;
+            default:
+                return playerDetectionDistance;
+        }
+    }
+
+    private float GetEffectivePlayerStopDistance()
+    {
+        switch (AffinityStage)
+        {
+            case PetAffinityStage.Bonded:
+                return Mathf.Min(playerStopDistance, bondedPlayerStopDistance);
+            case PetAffinityStage.Familiar:
+                return Mathf.Min(playerStopDistance, familiarPlayerStopDistance);
+            default:
+                return Mathf.Max(playerStopDistance, newPlayerStopDistance);
+        }
+    }
+
+    private float GetEffectivePettingDuration()
+    {
+        float stageBonus = AffinityStage == PetAffinityStage.Bonded
+            ? 0.9f
+            : AffinityStage == PetAffinityStage.Familiar ? 0.35f : 0f;
+        return Mathf.Max(0.1f, pettingDuration + stageBonus);
+    }
+
+    private float GetEffectiveRestIdleChance()
+    {
+        float multiplier = AffinityStage == PetAffinityStage.Bonded
+            ? 1.8f
+            : AffinityStage == PetAffinityStage.Familiar ? 1f : 0.35f;
+        return Mathf.Clamp01(restIdleChance * multiplier);
     }
 
     private void UpdatePlayerFollow()
@@ -2966,7 +3188,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             return;
         }
 
-        if (distance <= playerStopDistance)
+        float stopDistance = GetEffectivePlayerStopDistance();
+        if (distance <= stopDistance)
         {
             // 가만히 있는 애니메이션을 재생하는 동안에는 이동과 회전을 모두 하지 않습니다.
             followUsesRunAnimation = false;
@@ -3014,7 +3237,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
             {
                 followUsesRunAnimation = false;
                 followUsesTrotAnimation = distance > Mathf.Max(
-                    playerStopDistance,
+                    stopDistance,
                     playerTrotDistance - runWalkHysteresis);
             }
         }
@@ -3026,7 +3249,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
                 followUsesTrotAnimation = false;
             }
             else if (distance <= Mathf.Max(
-                playerStopDistance,
+                stopDistance,
                 playerTrotDistance - runWalkHysteresis))
             {
                 followUsesTrotAnimation = false;
@@ -3235,7 +3458,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         Vector3 playerToDog = transform.position - GetPlayerPosition();
         playerToDog.y = 0f;
-        float maxDistance = playerStopDistance + 0.35f;
+        float maxDistance = GetEffectivePlayerStopDistance() + 0.35f;
         if (playerToDog.sqrMagnitude <= 0.0001f ||
             playerToDog.sqrMagnitude > maxDistance * maxDistance)
             return false;
@@ -3786,7 +4009,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         Vector3 toPlayer = GetPlayerPosition() - transform.position;
         toPlayer.y = 0f;
-        return toPlayer.sqrMagnitude <= playerStopDistance * playerStopDistance;
+        float stopDistance = GetEffectivePlayerStopDistance();
+        return toPlayer.sqrMagnitude <= stopDistance * stopDistance;
     }
 
     #endregion
@@ -3869,6 +4093,8 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
 
         pendingFetchBall = null;
         pendingFetchIsThrown = false;
+        callResponsePhase = CallResponsePhase.None;
+        callResponseElapsed = 0f;
         scheduledRoutinePhase = ScheduledRoutinePhase.None;
         scheduledRoutineElapsed = 0f;
         mealRequested = false;
@@ -4351,7 +4577,7 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     {
         if (!HasRestIdleSequence() || lastIdleWasRestPose ||
             Time.time < restIdleSuppressedUntilTime ||
-            Random.value >= restIdleChance)
+            Random.value >= GetEffectiveRestIdleChance())
             return false;
 
         bool hasSitting = HasCompleteIdleSequence(

@@ -1,0 +1,10 @@
+{
+  "name": "VRTest.EditModeTests",
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}

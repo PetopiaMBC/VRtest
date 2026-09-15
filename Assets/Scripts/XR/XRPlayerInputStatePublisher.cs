@@ -15,6 +15,10 @@ public sealed class XRPlayerInputStatePublisher : MonoBehaviour
 
     private bool previousLeftGrip;
     private bool previousRightGrip;
+    private bool previousLeftPrimaryButton;
+    private bool previousRightPrimaryButton;
+    private bool previousLeftSecondaryButton;
+    private bool previousRightSecondaryButton;
 
     public static XRPlayerInputStatePublisher Instance { get; private set; }
     public PlayerDeviceMode DeviceMode => deviceMode;
@@ -48,10 +52,22 @@ public sealed class XRPlayerInputStatePublisher : MonoBehaviour
     private void Update()
     {
         ResolveTrackingOrigin();
-        LeftState = ReadController(XRNode.LeftHand, previousLeftGrip);
-        RightState = ReadController(XRNode.RightHand, previousRightGrip);
+        LeftState = ReadController(
+            XRNode.LeftHand,
+            previousLeftGrip,
+            previousLeftPrimaryButton,
+            previousLeftSecondaryButton);
+        RightState = ReadController(
+            XRNode.RightHand,
+            previousRightGrip,
+            previousRightPrimaryButton,
+            previousRightSecondaryButton);
         previousLeftGrip = LeftState.GripHeld;
         previousRightGrip = RightState.GripHeld;
+        previousLeftPrimaryButton = LeftState.PrimaryButtonHeld;
+        previousRightPrimaryButton = RightState.PrimaryButtonHeld;
+        previousLeftSecondaryButton = LeftState.SecondaryButtonHeld;
+        previousRightSecondaryButton = RightState.SecondaryButtonHeld;
     }
 
     public PlayerInputState GetState(PlayerHand hand)
@@ -59,7 +75,11 @@ public sealed class XRPlayerInputStatePublisher : MonoBehaviour
         return hand == PlayerHand.Left ? LeftState : RightState;
     }
 
-    private PlayerInputState ReadController(XRNode node, bool previousGrip)
+    private PlayerInputState ReadController(
+        XRNode node,
+        bool previousGrip,
+        bool previousPrimaryButton,
+        bool previousSecondaryButton)
     {
         InputDevice device = InputDevices.GetDeviceAtXRNode(node);
         bool hasPosition = device.TryGetFeatureValue(CommonUsages.devicePosition, out Vector3 localPosition);
@@ -70,6 +90,8 @@ public sealed class XRPlayerInputStatePublisher : MonoBehaviour
         device.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 primaryAxis);
         device.TryGetFeatureValue(CommonUsages.trigger, out float triggerValue);
         device.TryGetFeatureValue(CommonUsages.gripButton, out bool gripHeld);
+        device.TryGetFeatureValue(CommonUsages.primaryButton, out bool primaryButtonHeld);
+        device.TryGetFeatureValue(CommonUsages.secondaryButton, out bool secondaryButtonHeld);
 
         bool trackingValid = device.isValid && hasPosition && hasRotation &&
                              (!hasTrackingFlag || isTracked);
@@ -96,6 +118,10 @@ public sealed class XRPlayerInputStatePublisher : MonoBehaviour
             GripHeld = gripHeld,
             GripPressed = gripHeld && !previousGrip,
             GripReleased = !gripHeld && previousGrip,
+            PrimaryButtonHeld = primaryButtonHeld,
+            PrimaryButtonPressed = primaryButtonHeld && !previousPrimaryButton,
+            SecondaryButtonHeld = secondaryButtonHeld,
+            SecondaryButtonPressed = secondaryButtonHeld && !previousSecondaryButton,
             IsTrackingValid = trackingValid,
             DeviceMode = deviceMode,
             Timestamp = Time.unscaledTimeAsDouble
