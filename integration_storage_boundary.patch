@@ -1,0 +1,69 @@
+diff --git a/UnityProject/Assets/Scripts/Integration/PetRelationship.cs b/UnityProject/Assets/Scripts/Integration/PetRelationship.cs
+--- a/UnityProject/Assets/Scripts/Integration/PetRelationship.cs
++++ b/UnityProject/Assets/Scripts/Integration/PetRelationship.cs
+@@ -21,15 +21,22 @@ public interface IPetRelationshipStorage
+     void Write(string value);
+ }
+ 
+-public sealed class PetRelationshipPlayerPrefs : IPetRelationshipStorage
++public interface IPetRelationshipClockStorage
++{
++    string ReadLastSeenUtc();
++    void WriteLastSeenUtc(string value);
++}
++
++public sealed class PetRelationshipPlayerPrefs : IPetRelationshipStorage, IPetRelationshipClockStorage
+ {
+     public const string DefaultKey="MyLittlePet.Relationship.v1";
+     public const string ProgressKey="MyLittlePet.Relationship.v2";
+-    private readonly string legacyKey,key;
+-    public string OfflineClockKey { get; }
++    private readonly string legacyKey,key,offlineClockKey;
+     public PetRelationshipPlayerPrefs(string key=DefaultKey)
+     { legacyKey=key; this.key=key==DefaultKey?ProgressKey:key+".v2";
+-      OfflineClockKey=this.key+".lastSeenUtcTicks.v1"; }
++      offlineClockKey=this.key+".lastSeenUtcTicks.v1"; }
+     public string Read()
+@@ -40,6 +47,8 @@ public sealed class PetRelationshipPlayerPrefs : IPetRelationshipStorage
+         return migrated;
+     }
+     public void Write(string value) { PlayerPrefs.SetString(key,value); PlayerPrefs.Save(); }
++    public string ReadLastSeenUtc() => PlayerPrefs.GetString(offlineClockKey,"");
++    public void WriteLastSeenUtc(string value) { PlayerPrefs.SetString(offlineClockKey,value); PlayerPrefs.Save(); }
+ }
+diff --git a/UnityProject/Assets/Scripts/Integration/PetExperience.AffinityRules.cs b/UnityProject/Assets/Scripts/Integration/PetExperience.AffinityRules.cs
+--- a/UnityProject/Assets/Scripts/Integration/PetExperience.AffinityRules.cs
++++ b/UnityProject/Assets/Scripts/Integration/PetExperience.AffinityRules.cs
+@@ -107,8 +107,8 @@ public sealed partial class PetExperience
+ 
+     private void ApplyOfflineAffinityDecay(DateTime utcNow)
+     {
+-        if(!TryGetAffinityClockKey(out var key)) return;
+-        var text=PlayerPrefs.GetString(key,"");
++        if(!TryGetAffinityClock(out var clock)) return;
++        var text=clock.ReadLastSeenUtc();
+         if(long.TryParse(text,NumberStyles.Integer,CultureInfo.InvariantCulture,out var savedTicks) && savedTicks>0)
+@@ -120,21 +120,19 @@ public sealed partial class PetExperience
+         SaveAffinityClock(utcNow);
+     }
+ 
+-    private bool TryGetAffinityClockKey(out string key)
++    private bool TryGetAffinityClock(out IPetRelationshipClockStorage clock)
+     {
+-        key=null;
+-        if(!enableRelationshipProgress || !relationshipLoaded || relationshipStorage is not PetRelationshipPlayerPrefs prefs) return false;
+-        key=prefs.OfflineClockKey;
+-        return !string.IsNullOrEmpty(key);
++        clock=relationshipStorage as IPetRelationshipClockStorage;
++        return enableRelationshipProgress && relationshipLoaded && clock!=null;
+     }
+ 
+     private void SaveAffinityClock() => SaveAffinityClock(DateTime.UtcNow);
+     private void SaveAffinityClock(DateTime utcNow)
+     {
+-        if(!TryGetAffinityClockKey(out var key)) return;
+-        PlayerPrefs.SetString(key,utcNow.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
+-        PlayerPrefs.Save();
++        if(!TryGetAffinityClock(out var clock)) return;
++        clock.WriteLastSeenUtc(utcNow.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
+     }
