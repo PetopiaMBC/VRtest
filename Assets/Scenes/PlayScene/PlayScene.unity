@@ -1660,6 +1660,366 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2035515466}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1001 &2049000001
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 1933970278532253624, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_Controller
+      value:
+      objectReference: {fileID: 9100000, guid: 0728760e41fcd0240b7c143128c71310, type: 2}
+    - target: {fileID: 1933970278532253624, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_CullingMode
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 1933970278532253624, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_ApplyRootMotion
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5151321656137451384, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_Name
+      value: Golden Retriever Companion
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 1.5215
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 1.5215
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 1.5215
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -1.1736
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.06
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 3.4317
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: -0.0045966655
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0.9999895
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 180.527
+      objectReference: {fileID: 0}
+    - target: {fileID: 5491853238098058690, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 5151321656137451384, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2049000005}
+    - targetCorrespondingSourceObject: {fileID: 5151321656137451384, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2049000004}
+    - targetCorrespondingSourceObject: {fileID: 5151321656137451384, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 2049000006}
+  m_SourcePrefab: {fileID: 100100000, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+--- !u!95 &2049000002 stripped
+Animator:
+  m_CorrespondingSourceObject: {fileID: 1933970278532253624, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+  m_PrefabInstance: {fileID: 2049000001}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1 &2049000003 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 5151321656137451384, guid: f2575f6155c743d3be8200203c0aa87f, type: 3}
+  m_PrefabInstance: {fileID: 2049000001}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &2049000004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2049000003}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3565c37e63e99864c8a5dd53e55127e5, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::ShepherdVertexGrabInteraction
+  playerCamera: {fileID: 0}
+  grabDistance: 3
+  neckGrabBone: {fileID: 0}
+  neckGrabBoneName: DEF-spine.010
+  neckGripSurfaceOffset: 0.035
+  holdDistance: 3
+  useInteractionDistanceWhenGrabbed: 1
+  minimumInteractionHoldDistance: 0.8
+  maximumInteractionHoldDistance: 3.6
+  heldDistanceExtra: 0.45
+  holdVerticalOffset: -0.2
+  holdVerticalFollow: 1
+  holdFollowSpeed: 10
+  holdRotationSpeed: 10
+  holdTargetSmoothTime: 0.12
+  holdTargetMaximumSpeed: 7
+  heldCameraPitchLimit: 55
+  heldTargetMaximumVerticalTravel: 1
+  heldGroundClearance: 0.06
+  heldBodyMaximumTurnSpeed: 160
+  gravityStrength: 0.5
+  bodyGravityInfluence: 0.9
+  pelvisGravityInfluence: 0.95
+  pelvisHangLengthRatio: 0.88
+  heldSpineMinimumLengthRatio: 0.84
+  heldPelvisBackwardOffset: 0.14
+  heldSpineStraighteningStrength: 0.94
+  spineIkIterations: 6
+  spineIkStrength: 0.9
+  heldHeadLookAngle: 65
+  heldHeadStiffness: 0.92
+  heldHeadMaximumPitch: 18
+  heldHeadUprightSupport: 0.75
+  heldNeckUprightStrength: 0.88
+  heldNeckForwardLean: 0.42
+  heldNeckMaximumAngle: 58
+  limbGravityInfluence: 0.85
+  tailGravityInfluence: 0.9
+  bodyMaximumSagAngle: 78
+  limbMaximumSagAngle: 55
+  hindLegMaximumSagAngle: 78
+  tailMaximumSagAngle: 80
+  deformationFollowSpeed: 5
+  gravityInfluenceRadius: 1.25
+  useNaturalGrabTransitions: 1
+  naturalLiftDuration: 0.45
+  naturalLiftArcHeight: 0.1
+  naturalLowerDuration: 0.7
+  skipNaturalLoweringForCompletionAnimation: 1
+  naturalReleaseGroundClearance: 0.025
+  naturalReleaseAnimationBlendDuration: 0.38
+  playPantingWhileHeld: 1
+  heldPantingClip: {fileID: 0}
+  heldPantingClipName: Arm_Shiba|Idle_3
+  heldIdleClipNames:
+  - Arm_Shiba|Pick_up_idle
+  - Arm_Shiba|Idle_1
+  - Arm_Shiba|Idle_2
+  - Arm_Shiba|Idle_3
+  - Arm_Shiba|Idle_4
+  - Arm_Shiba|Idle_6
+  - Arm_Shiba|Idle_7
+  heldIdleTransitionDuration: 0.28
+  heldPantingSpeed: 1
+  heldPantingStrength: 1
+  heldHeadIdleStrength: 0.18
+  heldCollisionMask:
+    serializedVersion: 2
+    m_Bits: 51
+  heldCollisionSkin: 0.025
+  heldCollisionBoundsScale: 0.94
+  heldCollisionSlideIterations: 3
+--- !u!114 &2049000005
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2049000003}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c0f267dec2fb32a4bb3020803274d0b6, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::ShepherdCompanionAI
+  playerDetectionDistance: 3.5
+  playerStopDistance: 1.7
+  playerRunDistance: 2.7
+  runWalkHysteresis: 0.55
+  headYawLimit: 42
+  headPitchLimit: 38
+  headTurnSpeed: 7
+  headLookReturnDelay: 0.12
+  headLookReturnSpeed: 3.2
+  heldBallHeadTurnSpeed: 15
+  heldBallHeadYawLimit: 68
+  heldBallHeadPitchLimit: 55
+  heldBallLookCorrectionStrength: 0.96
+  heldBallNeckCorrectionShare: 0.35
+  smallLookAngle: 18
+  largeLookAngle: 58
+  sustainedBodyTurnDelay: 0.65
+  playerTransform: {fileID: 0}
+  playerCamera: {fileID: 0}
+  walkSpeed: 1.05
+  runSpeed: 2.3
+  trotSpeed: 1.45
+  playerTrotDistance: 2.2
+  locomotionAcceleration: 4
+  bodyTurnSpeed: 210
+  wanderRadius: 4.5
+  groundOffset: 0.03
+  obstacleCheckDistance: 0.75
+  obstacleCheckRadius: 0.2
+  obstacleCheckHeight: 0.45
+  obstacleAvoidanceDuration: 1.2
+  obstacleAvoidanceAngle: 90
+  obstaclePauseDuration: 0.2
+  obstacleEscapeDistance: 2.5
+  obstacleRepositionStopDistance: 0.35
+  mapRecoveryCenter: {x: 0, y: 0, z: 0}
+  minimumValidWorldY: -0.65
+  maximumDistanceFromMapCenter: 7.25
+  wallPenetrationGrace: 0.3
+  unreachableBallRecoveryDelay: 4.5
+  fetchProgressThreshold: 0.08
+  idleDurationMin: 2
+  idleDurationMax: 5
+  walkDurationMin: 3
+  walkDurationMax: 7
+  runDurationMin: 1.2
+  runDurationMax: 2.6
+  ambientRunChance: 0.16
+  foodBowl: {fileID: 1711635976}
+  sleepSpot: {fileID: 189282621}
+  eatingDuration: 10
+  foodStoppingDistance: 0.48
+  sleepingDuration: 30
+  bedEntranceClearance: 0.08
+  bedRouteClearance: 0.22
+  sleepSurfaceHeightRatio: 0.43
+  sleepPoseLocalOffset: {x: 0, y: 0, z: 0}
+  bedEntryDuration: 1.15
+  bedExitDuration: 0.9
+  eatLoopState: Arm_Shiba|Eat_loop
+  eatEndState: Arm_Shiba|EatDrink_end
+  sleepStartState: Arm_Shiba|Lie_belly_sleep_start
+  sleepLoopState: Arm_Shiba|Lie_belly_sleep
+  sleepEndState: Arm_Shiba|Lie_belly_sleep_end
+  pettingDuration: 3.4
+  pettingHeadTiltCycles: 3
+  pettingHeadTiltAngle: 13
+  pettingReleaseBlendDuration: 0.45
+  pettingEyelidCloseOffset: -56.2
+  minimumPettingHearts: 3
+  maximumPettingHearts: 6
+  heldBallWaitDistance: 1.45
+  ballPickupDistance: 0.42
+  ballBiteStartDistance: 0.82
+  ballBiteLungeSpeed: 1.2
+  cornerBallApproachDistance: 0.52
+  cornerBallPickupReach: 0.78
+  ballReturnDistance: 1.25
+  ballBiteDuration: 1.05
+  ballBiteAttachRatio: 0.48
+  ballMouthContactPadding: 0.16
+  ballMouthCaptureDuration: 0.13
+  ballPickupPredictionTime: 0.28
+  ballBiteAnimationSpeed: 1.4
+  ballPickupSettleDuration: 0.18
+  failedBallPickupRetryDelay: 0.25
+  ballDropDuration: 1.05
+  ballDropReleaseRatio: 0.42
+  ballBiteState: Arm_Shiba|Attack_Bite_IP
+  ballDropState: Arm_Shiba|EatDrink_end
+  ballMouthOffset: {x: 0, y: -0.09, z: 0.13}
+  heldBallNoticeDistance: 7
+  heldBallFieldOfView: 120
+  animator: {fileID: 2049000002}
+  idleBreathingState: Arm_Shiba|Idle_1
+  idlePlayingState: Arm_Shiba|Idle_2
+  idleStates:
+  - Arm_Shiba|Idle_1
+  - Arm_Shiba|Idle_2
+  - Arm_Shiba|Idle_3
+  - Arm_Shiba|Idle_4
+  - Arm_Shiba|Idle_6
+  - Arm_Shiba|Idle_7
+  idleSequenceStartState: Arm_Shiba|Idle_5_start
+  idleSequenceLoopState: Arm_Shiba|Idle_5_loop
+  idleSequenceEndState: Arm_Shiba|Idle_5_end
+  restIdleChance: 0.18
+  sittingStartState: Arm_Shiba|Sitting_start
+  sittingLoopStates:
+  - Arm_Shiba|Sitting_loop_1
+  - Arm_Shiba|Sitting_loop_2
+  sittingEndState: Arm_Shiba|Sitting_end
+  lyingStartState: Arm_Shiba|Lie_belly_start
+  lyingLoopStates:
+  - Arm_Shiba|Lie_belly_loop_1
+  - Arm_Shiba|Lie_belly_loop_2
+  lyingEndState: Arm_Shiba|Lie_belly_end
+  releaseState: Arm_Shiba|Put_down
+  walkState: Arm_Shiba|Walk_F_IP
+  runState: Arm_Shiba|Run_F_IP
+  trotState: Arm_Shiba|Trot_F_IP
+  runLeanRightState: Arm_Shiba|Run_R_IP
+  runLeanLeftState: Arm_Shiba|Run_L_IP
+  walkTurnRightState: Arm_Shiba|Walk_R_IP
+  walkTurnLeftState: Arm_Shiba|Walk_L_IP
+  turnLeft180State: Arm_Shiba|Turn_L180_IP
+  turnRight180State: Arm_Shiba|Turn_R180_IP
+  turn180AngleThreshold: 105
+  turn180AnimationDuration: 1
+  animationBlendTime: 0.18
+  locomotionBlendTime: 0.28
+  runAnimationSpeed: 1.55
+  trotAnimationSpeed: 1.35
+  animationSpeedChangeRate: 4.5
+  runTurnAngleThreshold: 12
+  runTurnAnimationDuration: 0.35
+  walkTurnAngleThreshold: 12
+  walkTurnAnimationDuration: 0.35
+--- !u!114 &2049000006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2049000003}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd9d4f5450e865241b5433948a2245b3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::PetNeedsSystem
+  hunger: 100
+  fatigue: 100
+  decreaseNeedsOverTime: 1
+  hungerDecreaseInterval: 15
+  fatigueDecreaseInterval: 30
+  passiveDecreaseAmount: 1
+  fetchCatchHungerCost: 3
+  fetchCatchFatigueCost: 5
+  grabbedFatigueCost: 3
+  pettingFatigueCost: 1
+  mealRecovery: 70
+  sleepRecovery: 70
+  optionalMealThreshold: 30
+  mandatorySleepThreshold: 20
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -1670,5 +2030,6 @@ SceneRoots:
   - {fileID: 189282620}
   - {fileID: 1711635975}
   - {fileID: 430774186}
+  - {fileID: 2049000001}
   - {fileID: 1834636815}
   - {fileID: 647364308}
