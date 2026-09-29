@@ -87,9 +87,7 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
     public bool TryBeginXRGrab(Transform controllerAnchor)
     {
-        if (controllerAnchor == null || heldByPlayer || carriedByDog ||
-            dogMouthCaptureInProgress || playerHeldBall != null ||
-            ShepherdVertexGrabInteraction.IsAnyDogHeld)
+        if (!CanBeginXRGrab(controllerAnchor))
             return false;
 
         xrHoldAnchor = controllerAnchor;
@@ -99,6 +97,17 @@ public sealed class FetchBallInteraction : MonoBehaviour
 
         xrHoldAnchor = null;
         return false;
+    }
+
+    /// <summary>
+    /// 상태를 바꾸지 않고 현재 XR Grip으로 공을 잡을 수 있는지 반환합니다.
+    /// 컨트롤러 접촉 거리 판정은 XRControllerContactInteractor가 단일 소유합니다.
+    /// </summary>
+    public bool CanBeginXRGrab(Transform controllerAnchor)
+    {
+        return controllerAnchor != null && isActiveAndEnabled && ballBody != null &&
+               !heldByPlayer && !carriedByDog && !dogMouthCaptureInProgress &&
+               playerHeldBall == null && !ShepherdVertexGrabInteraction.IsAnyDogHeld;
     }
 
     public void ReleaseXRGrab(Vector3 controllerVelocity, Vector3 controllerAngularVelocity)

@@ -457,6 +457,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
     public float Hunger => needsSystem != null ? needsSystem.Hunger : PetNeedsSystem.MaximumValue;
     public float Fatigue => needsSystem != null ? needsSystem.Fatigue : PetNeedsSystem.MaximumValue;
     public float Affinity => affinitySystem != null ? affinitySystem.Affinity : 0f;
+    public float NormalizedAffinity => affinitySystem != null
+        ? affinitySystem.NormalizedAffinity
+        : 0f;
+    public bool IsPettingReactionActive => pettingPhase != PettingPhase.None;
     public PetAffinityStage AffinityStage => affinitySystem != null
         ? affinitySystem.Stage
         : PetAffinityStage.New;
@@ -704,6 +708,10 @@ public sealed class ShepherdCompanionAI : MonoBehaviour
         affinitySystem = GetComponent<PetAffinitySystem>();
         if (affinitySystem == null)
             affinitySystem = gameObject.AddComponent<PetAffinitySystem>();
+        if (GetComponent<PetTailWagController>() == null)
+            gameObject.AddComponent<PetTailWagController>();
+        if (GetComponent<PetAudioController>() == null)
+            gameObject.AddComponent<PetAudioController>();
         if (useLocalAffinityPersistence)
         {
             PetAffinityPlayerPrefsBridge persistenceBridge =

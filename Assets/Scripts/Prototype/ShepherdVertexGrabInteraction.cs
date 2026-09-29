@@ -98,17 +98,37 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [Tooltip("앞다리와 뒷다리가 아래로 늘어지는 비율입니다.")]
     [SerializeField, Range(0f, 1f)] private float limbGravityInfluence = 0.85f;
     [Tooltip("꼬리가 아래로 축 처지는 비율입니다.")]
-    [SerializeField, Range(0f, 1f)] private float tailGravityInfluence = 0.9f;
+    [SerializeField, Range(0f, 1f)] private float tailGravityInfluence = 0.55f;
     [Tooltip("척추가 원래 방향에서 아래 방향으로 꺾일 수 있는 최대 각도입니다.")]
     [SerializeField, Range(0f, 90f)] private float bodyMaximumSagAngle = 78f;
     [Tooltip("다리 뼈가 아래 방향으로 꺾일 수 있는 최대 각도입니다.")]
     [SerializeField, Range(0f, 90f)] private float limbMaximumSagAngle = 55f;
     [Tooltip("뒷다리 체인이 바닥 방향으로 늘어질 수 있는 최대 각도입니다. 앞다리보다 크게 설정해 골반 아래로 떨어지게 합니다.")]
-    [SerializeField, Range(0f, 90f)] private float hindLegMaximumSagAngle = 78f;
+    [SerializeField, Range(0f, 90f)] private float hindLegMaximumSagAngle = 58f;
     [Tooltip("꼬리 뼈가 아래 방향으로 꺾일 수 있는 최대 각도입니다.")]
-    [SerializeField, Range(0f, 90f)] private float tailMaximumSagAngle = 80f;
+    [SerializeField, Range(0f, 90f)] private float tailMaximumSagAngle = 58f;
     [Tooltip("중력 포즈가 완성되는 속도입니다. 낮을수록 몸이 늦게 따라와 더 유연하게 보입니다.")]
     [SerializeField, Min(1f)] private float deformationFollowSpeed = 5f;
+
+    [Header("들린 허리와 다리 자세")]
+    [Tooltip("꼬리 위쪽과 골반에 가까운 척추를 원래 곡선에 가깝게 보호하는 비율입니다. 값이 클수록 허리 폴리곤이 덜 접힙니다.")]
+    [SerializeField, Range(0f, 1f)] private float heldLowerBackProtection = 0.78f;
+    [Tooltip("들린 앞다리를 몸 앞쪽으로 내미는 정도입니다.")]
+    [SerializeField, Range(0f, 0.6f)] private float heldFrontLegForwardReach = 0.34f;
+    [Tooltip("들린 뒷다리를 몸 앞쪽으로 모으는 정도입니다.")]
+    [SerializeField, Range(0f, 0.6f)] private float heldHindLegForwardReach = 0.28f;
+    [Tooltip("무릎 아래 관절이 완전히 일자로 펴지지 않도록 남겨 두는 앞쪽 굽힘입니다.")]
+    [SerializeField, Range(0f, 0.4f)] private float heldLowerLegForwardBend = 0.18f;
+
+    [Header("들린 몸의 자연스러운 보조 움직임")]
+    [Tooltip("들고 있을 때 몸통과 다리에 더하는 작은 호흡·관성 움직임의 전체 세기입니다.")]
+    [SerializeField, Range(0f, 1f)] private float heldSecondaryMotionStrength = 0.7f;
+    [Tooltip("몸통이 좌우로 부드럽게 움직이는 최대 각도입니다.")]
+    [SerializeField, Range(0f, 6f)] private float heldTorsoSwayAngle = 2.2f;
+    [Tooltip("매달린 다리가 서로 다른 박자로 움직이는 최대 각도입니다.")]
+    [SerializeField, Range(0f, 10f)] private float heldLimbSecondaryAngle = 4.5f;
+    [Tooltip("들린 몸의 느린 보조 움직임 속도입니다.")]
+    [SerializeField, Range(0.2f, 2f)] private float heldSecondaryMotionFrequency = 0.72f;
 
     [Header("중력 영향 범위")]
     [Tooltip("몸통과 다리 포즈에 중력이 영향을 주는 기준 거리입니다.")]
@@ -146,6 +166,14 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float heldPantingStrength = 1f;
     [Tooltip("Strength of the held idle clip's subtle head movement.")]
     [SerializeField, Range(0f, 0.5f)] private float heldHeadIdleStrength = 0.18f;
+    [Tooltip("헥헥거릴 때 혀가 입 밖으로 나오는 최대 길이(미터)입니다.")]
+    [SerializeField, Range(0f, 0.03f)] private float heldTongueExtension = 0.012f;
+    [Tooltip("헥헥거릴 때 혀가 좌우로 흔들리는 최대 각도입니다.")]
+    [SerializeField, Range(0f, 12f)] private float heldTongueSwayAngle = 3.5f;
+    [Tooltip("혀끝이 아래쪽으로 부드럽게 말리는 최대 각도입니다.")]
+    [SerializeField, Range(0f, 18f)] private float heldTongueTipCurlAngle = 6f;
+    [Tooltip("혀의 작은 보조 움직임 속도입니다.")]
+    [SerializeField, Range(0.5f, 4f)] private float heldTongueMotionFrequency = 1.7f;
 
     [Header("Held collision")]
     [Tooltip("Layers that block the dog while it is being held.")]
@@ -233,6 +261,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private Transform tailMiddle;
     private Transform tailTip;
     private Transform tailEnd;
+    private Transform tailTerminal;
     private Transform headBone;
     private Transform jawBone;
     private Transform tongueBone;
@@ -283,7 +312,7 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
     public bool TryBeginXRGrab(Transform controllerAnchor)
     {
-        if (controllerAnchor == null || holding)
+        if (!CanBeginXRGrab(controllerAnchor))
             return false;
 
         xrHoldAnchor = controllerAnchor;
@@ -293,6 +322,18 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
         xrHoldAnchor = null;
         return false;
+    }
+
+    /// <summary>
+    /// 상태를 바꾸지 않고 현재 XR Grip으로 강아지를 잡을 수 있는지 반환합니다.
+    /// 외곽선 피드백과 실제 잡기가 같은 조건을 공유할 때 사용합니다.
+    /// </summary>
+    public bool CanBeginXRGrab(Transform controllerAnchor)
+    {
+        ResolveReferences();
+        return controllerAnchor != null && isActiveAndEnabled && !holding &&
+               !IsAnyDogHeld && !FetchBallInteraction.IsAnyBallHeldByPlayer &&
+               neckGrabBone != null && skinnedRenderer != null;
     }
 
     public void ReleaseXRGrab()
@@ -819,8 +860,9 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
 
         tailBase = FindBoneAny("DEF-spine.003", "Tail_01");
         tailMiddle = FindBoneAny("DEF-spine.002", "Tail_02");
-        tailTip = FindBoneAny("DEF-spine.001", "Tail_04", "Tail_03");
-        tailEnd = FindBoneAny("DEF-spine", "Tail_05");
+        tailTip = FindBoneAny("DEF-spine.001", "Tail_03", "Tail_04");
+        tailEnd = FindBoneAny("DEF-spine", "Tail_04", "Tail_05");
+        tailTerminal = FindBoneAny("Tail_05");
         headBone = FindBoneAny("DEF-spine.011", "head");
         jawBone = FindBoneAny("DEF-jaw", "mouth");
         tongueBone = FindBoneAny("DEF-tongue", "tongue_1");
@@ -1518,37 +1560,64 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
         Vector3 left = -transform.right;
         Vector3 right = transform.right;
 
-        // 앞발은 몸 앞쪽으로 살짝 나오고, 뒷발은 몸 뒤쪽으로 벌어진 뒤 아래로 떨어집니다.
-        Vector3 frontLeftDirection = (gravityDirection * 0.82f + dogForward * 0.16f + left * 0.08f).normalized;
-        Vector3 frontRightDirection = (gravityDirection * 0.82f + dogForward * 0.16f + right * 0.08f).normalized;
-        Vector3 hindLeftDirection = (gravityDirection * 0.94f + dogBack * 0.02f + left * 0.04f).normalized;
-        Vector3 hindRightDirection = (gravityDirection * 0.94f + dogBack * 0.02f + right * 0.04f).normalized;
-        float hindInfluence = Mathf.Clamp01(limbInfluence * 1.7f);
+        // 실제 강아지를 가슴 아래에서 든 자세처럼 네 다리가 골반 바로 아래로 수직 낙하하지 않고
+        // 몸 앞쪽으로 살짝 모이게 합니다. 이 방향은 뒷다리가 골반을 아래로 잡아당겨 꼬리 위쪽
+        // 폴리곤을 접는 현상도 줄여 줍니다.
+        Vector3 frontLeftDirection = ComposeHeldLimbDirection(
+            gravityDirection, dogForward, left, 0.78f, heldFrontLegForwardReach, 0.07f);
+        Vector3 frontRightDirection = ComposeHeldLimbDirection(
+            gravityDirection, dogForward, right, 0.78f, heldFrontLegForwardReach, 0.07f);
+        Vector3 hindLeftDirection = ComposeHeldLimbDirection(
+            gravityDirection, dogForward, left, 0.84f, heldHindLegForwardReach, 0.04f);
+        Vector3 hindRightDirection = ComposeHeldLimbDirection(
+            gravityDirection, dogForward, right, 0.84f, heldHindLegForwardReach, 0.04f);
+        Vector3 lowerLegDirection = ComposeHeldLimbDirection(
+            gravityDirection, dogForward, Vector3.zero, 0.92f, heldLowerLegForwardBend, 0f);
+        float hindInfluence = Mathf.Clamp01(limbInfluence * 1.2f);
 
         // 연결 체인을 부모에서 자식 순서로 모두 회전시켜 관절 사이가 꺾이거나 빠져 보이지 않게 합니다.
         AimBoneTowardDirection(frontShoulderLeft, frontLeftDirection, limbInfluence * 0.28f, limbMaximumSagAngle * 0.35f);
         AimBoneTowardDirection(frontShoulderRight, frontRightDirection, limbInfluence * 0.28f, limbMaximumSagAngle * 0.35f);
         AimBoneTowardDirection(frontThighLeft, frontLeftDirection, limbInfluence * 0.92f, limbMaximumSagAngle);
         AimBoneTowardDirection(frontThighRight, frontRightDirection, limbInfluence * 0.92f, limbMaximumSagAngle);
-        AimBoneTowardDirection(frontShinLeft, gravityDirection, limbInfluence * 0.82f, limbMaximumSagAngle * 0.9f);
-        AimBoneTowardDirection(frontShinRight, gravityDirection, limbInfluence * 0.82f, limbMaximumSagAngle * 0.9f);
-        AimBoneTowardDirection(frontFootLeft, (gravityDirection + dogForward * 0.18f).normalized, limbInfluence * 0.62f, limbMaximumSagAngle * 0.55f);
-        AimBoneTowardDirection(frontFootRight, (gravityDirection + dogForward * 0.18f).normalized, limbInfluence * 0.62f, limbMaximumSagAngle * 0.55f);
+        AimBoneTowardDirection(frontShinLeft, lowerLegDirection, limbInfluence * 0.72f, limbMaximumSagAngle * 0.72f);
+        AimBoneTowardDirection(frontShinRight, lowerLegDirection, limbInfluence * 0.72f, limbMaximumSagAngle * 0.72f);
+        AimBoneTowardDirection(frontFootLeft, lowerLegDirection, limbInfluence * 0.52f, limbMaximumSagAngle * 0.42f);
+        AimBoneTowardDirection(frontFootRight, lowerLegDirection, limbInfluence * 0.52f, limbMaximumSagAngle * 0.42f);
 
         AimBoneTowardDirection(hindThighLeft, hindLeftDirection, hindInfluence, hindLegMaximumSagAngle);
         AimBoneTowardDirection(hindThighRight, hindRightDirection, hindInfluence, hindLegMaximumSagAngle);
-        AimBoneTowardDirection(hindShinLeft, gravityDirection, hindInfluence * 0.95f, hindLegMaximumSagAngle * 0.9f);
-        AimBoneTowardDirection(hindShinRight, gravityDirection, hindInfluence * 0.95f, hindLegMaximumSagAngle * 0.9f);
-        AimBoneTowardDirection(hindFootLeft, (gravityDirection + dogForward * 0.08f).normalized, hindInfluence * 0.82f, hindLegMaximumSagAngle * 0.62f);
-        AimBoneTowardDirection(hindFootRight, (gravityDirection + dogForward * 0.08f).normalized, hindInfluence * 0.82f, hindLegMaximumSagAngle * 0.62f);
+        AimBoneTowardDirection(hindShinLeft, lowerLegDirection, hindInfluence * 0.76f, hindLegMaximumSagAngle * 0.72f);
+        AimBoneTowardDirection(hindShinRight, lowerLegDirection, hindInfluence * 0.76f, hindLegMaximumSagAngle * 0.72f);
+        AimBoneTowardDirection(hindFootLeft, lowerLegDirection, hindInfluence * 0.58f, hindLegMaximumSagAngle * 0.46f);
+        AimBoneTowardDirection(hindFootRight, lowerLegDirection, hindInfluence * 0.58f, hindLegMaximumSagAngle * 0.46f);
 
-        tailInfluence = Mathf.Clamp01(tailInfluence * 1.7f);
-        Vector3 tailDirection = (gravityDirection * 0.96f + dogBack * 0.04f).normalized;
-        // 엉덩이 방향을 이어받는 꼬리 뿌리는 조금만 꺾고, 끝으로 갈수록
-        // 중력 영향을 크게 적용해 한 관절에서 접히지 않는 완만한 곡선을 만듭니다.
-        AimBoneTowardDirection(tailBase, tailDirection, tailInfluence * 0.3f, tailMaximumSagAngle * 0.25f);
-        AimBoneTowardDirection(tailMiddle, tailDirection, tailInfluence * 0.68f, tailMaximumSagAngle * 0.55f);
-        AimBoneTowardDirection(tailTip, gravityDirection, tailInfluence, tailMaximumSagAngle);
+        tailInfluence = Mathf.Clamp01(tailInfluence * 1.35f);
+        Vector3 relaxedTailDirection = (dogBack * 0.72f + gravityDirection * 0.28f).normalized;
+        Vector3 fallingTailDirection = (dogBack * 0.35f + gravityDirection * 0.65f).normalized;
+        // 허리와 맞닿은 첫 마디는 원래 곡선을 유지합니다. 두 번째 마디부터
+        // 중력을 단계적으로 적용해 연결부가 한 번에 꺾이지 않게 합니다.
+        AimBoneTowardDirection(
+            tailMiddle,
+            relaxedTailDirection,
+            tailInfluence * 0.22f,
+            tailMaximumSagAngle * 0.22f);
+        AimBoneTowardDirection(
+            tailTip,
+            fallingTailDirection,
+            tailInfluence * 0.48f,
+            tailMaximumSagAngle * 0.48f);
+        AimBoneTowardDirection(
+            tailEnd,
+            gravityDirection,
+            tailInfluence * 0.72f,
+            tailMaximumSagAngle * 0.72f);
+        ApplyWorldAxisRotation(
+            tailTerminal,
+            transform.right,
+            Mathf.Sin(Time.time * 1.1f) * 1.2f * heldPoseBlend);
+
+        ApplyHeldSecondaryMotion();
 
         // 척추 자세를 만든 뒤 얼굴의 방향과 기울기를 별도로 잡아 줍니다.
         // 방향 벡터만 맞추던 이전 방식과 달리 옆으로 쓰러지는 회전까지 보정합니다.
@@ -1560,6 +1629,56 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             float currentBodyDrop = neckGrabBone.position.y - skinnedRenderer.bounds.min.y;
             heldBodyDropBelowGrip = Mathf.Max(heldBodyDropBelowGrip, currentBodyDrop);
         }
+    }
+
+    /// <summary>
+    /// Adds small phase-offset motion after the gravity pose is solved.
+    /// This keeps the suspended body relaxed without fighting the neck target.
+    /// </summary>
+    private void ApplyHeldSecondaryMotion()
+    {
+        float blend = Mathf.Clamp01(heldSecondaryMotionStrength * heldPoseBlend);
+        if (blend <= 0.001f)
+            return;
+
+        float phase = Time.time * heldSecondaryMotionFrequency * Mathf.PI * 2f;
+        float torsoWave = Mathf.Sin(phase);
+        float breathingWave = Mathf.Sin(phase * 0.57f + 0.8f);
+        float limbWave = Mathf.Sin(phase * 0.83f + 1.35f);
+        float movementResponse = Mathf.Clamp(
+            Vector3.Dot(grabTargetVelocity, transform.right) * 0.35f,
+            -1f,
+            1f);
+
+        ApplyWorldAxisRotation(
+            torsoLower,
+            transform.forward,
+            (torsoWave - movementResponse) * heldTorsoSwayAngle * blend);
+        ApplyWorldAxisRotation(
+            torsoMid,
+            transform.forward,
+            -torsoWave * heldTorsoSwayAngle * 0.42f * blend);
+        ApplyWorldAxisRotation(
+            torsoUpper,
+            transform.right,
+            breathingWave * heldTorsoSwayAngle * 0.38f * blend);
+
+        float limbAngle = heldLimbSecondaryAngle * blend;
+        ApplyWorldAxisRotation(frontThighLeft, transform.right, limbWave * limbAngle);
+        ApplyWorldAxisRotation(frontThighRight, transform.right, -limbWave * limbAngle * 0.82f);
+        ApplyWorldAxisRotation(hindThighLeft, transform.right, -limbWave * limbAngle * 0.72f);
+        ApplyWorldAxisRotation(hindThighRight, transform.right, limbWave * limbAngle * 0.64f);
+    }
+
+    private static void ApplyWorldAxisRotation(
+        Transform bone,
+        Vector3 worldAxis,
+        float angle)
+    {
+        if (bone == null || worldAxis.sqrMagnitude < 0.0001f || Mathf.Abs(angle) < 0.001f)
+            return;
+
+        bone.rotation = Quaternion.AngleAxis(angle, worldAxis.normalized) * bone.rotation;
     }
 
     private void ApplyHeldPantingAnimation()
@@ -1628,6 +1747,33 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             heldIdleTransitionTongueTip,
             blend,
             transitionBlend);
+        ApplyHeldTongueSecondaryMotion(blend);
+    }
+
+    /// <summary>
+    /// 헥헥 애니메이션이 만든 기본 혀 자세 위에 짧은 돌출과 끝 말림만 더합니다.
+    /// 이동량과 각도를 제한해 혀가 얼굴을 뚫거나 과도하게 길어지지 않게 합니다.
+    /// </summary>
+    private void ApplyHeldTongueSecondaryMotion(float blend)
+    {
+        if (tongueBone == null || headBone == null || blend <= 0.001f)
+            return;
+
+        float phase = heldPantingTime * heldTongueMotionFrequency * Mathf.PI * 2f;
+        float breathPulse = 0.78f + Mathf.Sin(phase * 0.5f) * 0.22f;
+        Vector3 faceForward = headBone.TransformDirection(headForwardAxisLocal).normalized;
+        tongueBone.position += faceForward * heldTongueExtension * breathPulse * blend;
+
+        Vector3 headUp = headBone.TransformDirection(headUpAxisLocal).normalized;
+        Vector3 headRight = Vector3.Cross(headUp, faceForward).normalized;
+        ApplyWorldAxisRotation(
+            tongueMiddleBone,
+            headUp,
+            Mathf.Sin(phase) * heldTongueSwayAngle * blend);
+        ApplyWorldAxisRotation(
+            tongueTipBone,
+            headRight,
+            heldTongueTipCurlAngle * breathPulse * blend);
     }
 
     private void EnsureHeldPantingSampler()
@@ -2010,20 +2156,26 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
             transform.forward);
         float maximumAngle = Mathf.Max(bodyMaximumSagAngle, 92f);
 
-        // 아래쪽은 거의 수직으로 두고, 가슴과 목으로 올라갈수록 플레이어 쪽으로 아주 조금
-        // 기울입니다. 모든 마디가 같은 쪽으로 이어지므로 가슴만 뒤로 솟는 역방향 굴곡이 없습니다.
+        // 꼬리와 골반이 연결된 첫 두 마디는 회전량을 크게 줄입니다. 위쪽 척추가 나머지
+        // 세로 자세를 나누어 담당하므로 꼬리 위쪽 스킨이 한 관절에서 접히지 않습니다.
+        float lowerBackProtection = Mathf.Clamp01(heldLowerBackProtection);
+        float baseInfluence = influence * Mathf.Lerp(0.72f, 0.24f, lowerBackProtection);
+        float lowerInfluence = influence * Mathf.Lerp(0.86f, 0.48f, lowerBackProtection);
+        float baseMaximumAngle = maximumAngle * Mathf.Lerp(0.72f, 0.36f, lowerBackProtection);
+        float lowerMaximumAngle = maximumAngle * Mathf.Lerp(0.86f, 0.58f, lowerBackProtection);
+
         AimBoneSegmentTowardDirection(
             torsoBase,
             torsoLower != null ? torsoLower : torsoMid,
             (upward + transform.forward * forwardAmount * 0.55f).normalized,
-            influence,
-            maximumAngle);
+            baseInfluence,
+            baseMaximumAngle);
         AimBoneSegmentTowardDirection(
             torsoLower,
             torsoMid,
             (upward + transform.forward * forwardAmount * 0.7f).normalized,
-            influence,
-            maximumAngle);
+            lowerInfluence,
+            lowerMaximumAngle);
         AimBoneSegmentTowardDirection(
             torsoMid,
             torsoUpper,
@@ -2053,6 +2205,27 @@ public sealed class ShepherdVertexGrabInteraction : MonoBehaviour
     private static float BoneDistance(Transform from, Transform to)
     {
         return from != null && to != null ? Vector3.Distance(from.position, to.position) : 0f;
+    }
+
+    /// <summary>
+    /// 중력 방향에 몸 앞쪽과 좌우 벌림을 섞어 들린 다리의 목표 방향을 만듭니다.
+    /// 단위 벡터를 반환하므로 인스펙터 값이 바뀌어도 뼈 회전량이 안정적입니다.
+    /// </summary>
+    private static Vector3 ComposeHeldLimbDirection(
+        Vector3 gravityDirection,
+        Vector3 forwardDirection,
+        Vector3 sideDirection,
+        float downwardWeight,
+        float forwardWeight,
+        float sideWeight)
+    {
+        Vector3 direction =
+            gravityDirection * Mathf.Max(0f, downwardWeight) +
+            forwardDirection * Mathf.Max(0f, forwardWeight) +
+            sideDirection * Mathf.Max(0f, sideWeight);
+        return direction.sqrMagnitude > 0.0001f
+            ? direction.normalized
+            : Vector3.down;
     }
 
     private void SolveSpineIk(Vector3 neckTarget, float influence)

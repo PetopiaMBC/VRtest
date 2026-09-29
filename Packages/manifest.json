@@ -1,8 +1,8 @@
 {
   "dependencies": {
+    "com.ivanmurzak.unity.mcp": "0.93.2",
     "com.meta.xr.mrutilitykit": "205.0.0",
     "com.meta.xr.sdk.core": "205.0.0",
-    "com.ivanmurzak.unity.mcp": "0.90.0",
     "com.unity.ai.navigation": "2.0.14",
     "com.unity.feature.development": "1.0.2",
     "com.unity.ide.rider": "3.0.39",
